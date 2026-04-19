@@ -218,6 +218,7 @@ public sealed class HandSimulator
             discardedTile,
             WinKind.Ron,
             IsRiichi: state.Riichi[seat],
+            IsHoutei: state.Wall.Count == 0,
             RoundWindTileId: 27 + state.Round,
             SeatWindTileId: 27 + seat,
             IsDealer: seat == state.Dealer);
@@ -241,6 +242,7 @@ public sealed class HandSimulator
             wintile,
             WinKind.Ron,
             IsRiichi: state.Riichi[winner],
+            IsHoutei: state.Wall.Count == 0,
             RoundWindTileId: 27 + state.Round,
             SeatWindTileId: 27 + winner,
             IsDealer: winner == state.Dealer);
@@ -279,6 +281,7 @@ public sealed class HandSimulator
             state.LastDrawnTile.Value,
             WinKind.Tsumo,
             IsRiichi: state.Riichi[seat],
+            IsHaitei: state.Wall.Count == 0,
             RoundWindTileId: 27 + state.Round,
             SeatWindTileId: 27 + seat,
             IsDealer: seat == state.Dealer);
@@ -298,6 +301,7 @@ public sealed class HandSimulator
             state.LastDrawnTile!.Value,
             WinKind.Tsumo,
             IsRiichi: state.Riichi[seat],
+            IsHaitei: state.Wall.Count == 0,
             RoundWindTileId: 27 + state.Round,
             SeatWindTileId: 27 + seat,
             IsDealer: seat == state.Dealer);

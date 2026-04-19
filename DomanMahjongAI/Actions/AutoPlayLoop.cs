@@ -144,9 +144,40 @@ public sealed class AutoPlayLoop : IDisposable
                 }
 
                 var choice = plugin.Policy.Choose(snap);
-                if (choice.Kind != ActionKind.Discard || choice.DiscardTile is null)
+
+                // Tsumo: last-drawn tile is the winning tile; no slot needed.
+                if (choice.Kind == ActionKind.Tsumo)
+                {
+                    var result0 = plugin.Dispatcher.DispatchTsumo();
+                    LastActionDescription = $"auto-tsumo → {result0}";
+                    lastActionAt = DateTime.UtcNow;
+                    return;
+                }
+
+                // Ankan from our turn: dispatch kan with the slot of one of the 4 tiles.
+                if (choice.Kind == ActionKind.AnKan && choice.DiscardTile is { } kanTile)
+                {
+                    int kanSlot = InputDispatcher.FindSlotOfTile(kanTile, snap.Hand);
+                    if (kanSlot < 0)
+                    {
+                        LastActionDescription = $"kan tile {kanTile} not in hand";
+                        return;
+                    }
+                    var result1 = plugin.Dispatcher.DispatchKan(kanSlot);
+                    LastActionDescription = $"auto-ankan {kanTile} slot={kanSlot} → {result1}";
+                    lastActionAt = DateTime.UtcNow;
+                    return;
+                }
+
+                if (choice.Kind != ActionKind.Discard &&
+                    choice.Kind != ActionKind.Riichi)
                 {
                     LastActionDescription = $"policy returned {choice.Kind} — not dispatching";
+                    return;
+                }
+                if (choice.DiscardTile is null)
+                {
+                    LastActionDescription = $"policy {choice.Kind} missing tile";
                     return;
                 }
 
@@ -158,8 +189,11 @@ public sealed class AutoPlayLoop : IDisposable
                     return;
                 }
 
-                var result = plugin.Dispatcher.DispatchDiscard(slot);
-                LastActionDescription = $"auto-discard {tile} slot={slot} → {result}";
+                var result = choice.Kind == ActionKind.Riichi
+                    ? plugin.Dispatcher.DispatchRiichi(slot)
+                    : plugin.Dispatcher.DispatchDiscard(slot);
+                string actionName = choice.Kind == ActionKind.Riichi ? "riichi" : "discard";
+                LastActionDescription = $"auto-{actionName} {tile} slot={slot} → {result}";
                 lastActionAt = DateTime.UtcNow;
             }
             catch (Exception ex)
@@ -217,6 +251,10 @@ public sealed class AutoPlayLoop : IDisposable
                 InputDispatcher.DispatchResult result;
                 switch (choice.Kind)
                 {
+                    case ActionKind.Ron:
+                        result = plugin.Dispatcher.DispatchRon();
+                        LastActionDescription = $"auto-ron → {result}";
+                        break;
                     case ActionKind.Pon:
                     case ActionKind.Chi:
                     case ActionKind.MinKan:

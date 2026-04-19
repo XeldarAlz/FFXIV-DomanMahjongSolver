@@ -106,4 +106,106 @@ public sealed class InputDispatcher
         return -1;
     }
 
+    /// <summary>
+    /// Opcode constants for FireCallback's first AtkValue. Discard = 7, CallPrompt = 11
+    /// are confirmed from M6 logging; the rest are TODO — the stub methods below send
+    /// what the patterns are likely to be (speculation based on the numeric range of
+    /// discovered opcodes) and return HookFailed if the game rejects them. Once the
+    /// user captures a real riichi/tsumo/ron event the correct opcodes slot in here
+    /// with no call-site changes.
+    /// </summary>
+    private static class Opcode
+    {
+        public const int Discard = 7;
+        public const int CallPrompt = 11;
+
+        // Speculative — to be confirmed by in-game FireCallback capture:
+        public const int Riichi = 8;    // unconfirmed
+        public const int Tsumo = 9;     // unconfirmed
+        public const int Ron = 10;      // unconfirmed
+        public const int Kan = 12;      // unconfirmed (shouminkan + ankan from our turn)
+    }
+
+    /// <summary>
+    /// Declare riichi while also discarding the tile at <paramref name="slotIndex"/>.
+    /// WARNING: opcode unconfirmed — this will likely fail (return HookFailed) until
+    /// the user captures a real riichi event and the correct payload is filled in.
+    /// </summary>
+    public unsafe DispatchResult DispatchRiichi(int slotIndex)
+    {
+        if (slotIndex is < 0 or > 13) return DispatchResult.InvalidSlot;
+
+        var ptr = Plugin.GameGui.GetAddonByName(AddonName);
+        nint addr = ptr.Address;
+        if (addr == nint.Zero) return DispatchResult.AddonNotFound;
+
+        var unit = (AtkUnitBase*)addr;
+        if (!unit->IsVisible) return DispatchResult.AddonNotVisible;
+
+        var values = stackalloc AtkValue[2];
+        values[0].SetInt(Opcode.Riichi);
+        values[1].SetInt(slotIndex);
+        bool ok = unit->FireCallback(2, values, true);
+        return ok ? DispatchResult.Ok : DispatchResult.HookFailed;
+    }
+
+    /// <summary>
+    /// Declare tsumo on the last-drawn tile. WARNING: opcode unconfirmed.
+    /// </summary>
+    public unsafe DispatchResult DispatchTsumo()
+    {
+        var ptr = Plugin.GameGui.GetAddonByName(AddonName);
+        nint addr = ptr.Address;
+        if (addr == nint.Zero) return DispatchResult.AddonNotFound;
+
+        var unit = (AtkUnitBase*)addr;
+        if (!unit->IsVisible) return DispatchResult.AddonNotVisible;
+
+        var values = stackalloc AtkValue[1];
+        values[0].SetInt(Opcode.Tsumo);
+        bool ok = unit->FireCallback(1, values, true);
+        return ok ? DispatchResult.Ok : DispatchResult.HookFailed;
+    }
+
+    /// <summary>
+    /// Declare ron on the last opponent discard. WARNING: opcode unconfirmed. Ron may
+    /// actually be offered as a call prompt (opcode 11) with a distinct option index;
+    /// if so, <see cref="DispatchCallOption"/> already handles it and this stub
+    /// is not needed.
+    /// </summary>
+    public unsafe DispatchResult DispatchRon()
+    {
+        var ptr = Plugin.GameGui.GetAddonByName(AddonName);
+        nint addr = ptr.Address;
+        if (addr == nint.Zero) return DispatchResult.AddonNotFound;
+
+        var unit = (AtkUnitBase*)addr;
+        if (!unit->IsVisible) return DispatchResult.AddonNotVisible;
+
+        var values = stackalloc AtkValue[1];
+        values[0].SetInt(Opcode.Ron);
+        bool ok = unit->FireCallback(1, values, true);
+        return ok ? DispatchResult.Ok : DispatchResult.HookFailed;
+    }
+
+    /// <summary>
+    /// Declare kan from our own turn (ankan or shouminkan). WARNING: opcode unconfirmed.
+    /// </summary>
+    public unsafe DispatchResult DispatchKan(int slotIndex)
+    {
+        if (slotIndex is < 0 or > 13) return DispatchResult.InvalidSlot;
+
+        var ptr = Plugin.GameGui.GetAddonByName(AddonName);
+        nint addr = ptr.Address;
+        if (addr == nint.Zero) return DispatchResult.AddonNotFound;
+
+        var unit = (AtkUnitBase*)addr;
+        if (!unit->IsVisible) return DispatchResult.AddonNotVisible;
+
+        var values = stackalloc AtkValue[2];
+        values[0].SetInt(Opcode.Kan);
+        values[1].SetInt(slotIndex);
+        bool ok = unit->FireCallback(2, values, true);
+        return ok ? DispatchResult.Ok : DispatchResult.HookFailed;
+    }
 }

@@ -25,7 +25,7 @@ public class HandSimulatorTests
     }
 
     [Fact]
-    public void Hand_outcome_is_either_tsumo_or_ryuukyoku_in_valid_run()
+    public void Hand_outcome_is_tsumo_ron_or_ryuukyoku_in_valid_run()
     {
         var policies = new IPolicy[]
         {
@@ -36,7 +36,10 @@ public class HandSimulatorTests
         };
         var sim = new HandSimulator(new Random(100));
         var result = sim.Simulate(policies);
-        Assert.True(result.Outcome is HandSimulator.Outcome.Tsumo or HandSimulator.Outcome.Ryuukyoku,
+        Assert.True(
+            result.Outcome is HandSimulator.Outcome.Tsumo
+                          or HandSimulator.Outcome.Ron
+                          or HandSimulator.Outcome.Ryuukyoku,
             $"unexpected outcome: {result.Outcome}");
     }
 

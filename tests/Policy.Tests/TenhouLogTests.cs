@@ -38,6 +38,22 @@ public class TenhouLogTests
     }
 
     [Fact]
+    public void ParseEventTag_extracts_kind_and_tile_id()
+    {
+        var riichi = typeof(TenhouLog).GetMethod("ParseEventTag",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var resR = ((TenhouLog.EventKind kind, int tileId))riichi.Invoke(null, new object[] { "r60" })!;
+        Assert.Equal(TenhouLog.EventKind.Riichi, resR.kind);
+        Assert.Equal(15, resR.tileId);  // 60/4 = 15 (7p)
+
+        var resC = ((TenhouLog.EventKind kind, int tileId))riichi.Invoke(null, new object[] { "c12" })!;
+        Assert.Equal(TenhouLog.EventKind.Chi, resC.kind);
+
+        var resEmpty = ((TenhouLog.EventKind kind, int tileId))riichi.Invoke(null, new object[] { "" })!;
+        Assert.Equal(-1, resEmpty.tileId);
+    }
+
+    [Fact]
     public void ParseKyoku_reads_starting_state_from_minimal_log()
     {
         // Minimal synthetic kyoku: round 0 (E1), dealer=0, honba=0, no sticks.

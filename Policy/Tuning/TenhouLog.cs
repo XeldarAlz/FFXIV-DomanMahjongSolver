@@ -31,6 +31,10 @@ public static class TenhouLog
 
     public static bool IsRed5(int pai) => pai == 16 || pai == 52 || pai == 88;
 
+    public enum EventKind { None, Riichi, Pon, Chi, Kan, Agari, Other }
+
+    public readonly record struct Event(EventKind Kind, string RawTag, int TileId);
+
     public readonly record struct Kyoku(
         int Round,
         int Dealer,
@@ -39,8 +43,10 @@ public static class TenhouLog
         int[] StartScores,           // length 4
         Tile[] DoraIndicators,
         Tile[][] StartingHands,      // [seat][tile]
-        int[][] DrawTiles,           // [seat][draw order in that seat's draws] → 34-space id
-        int[][] DiscardTiles);       // [seat][discard order in that seat's discards] → 34-space id
+        int[][] DrawTiles,           // [seat][draw order] → 34-space id
+        int[][] DiscardTiles,        // [seat][discard order] → 34-space id
+        Event[][] DrawEvents,        // [seat][draw order] → event (parallel to DrawTiles) — non-None = special
+        Event[][] DiscardEvents);    // [seat][discard order] → event (parallel to DiscardTiles)
 
     /// <summary>
     /// Parse a single-kyoku Tenhou JSON array (e.g., one element of the root "log" array).
@@ -78,12 +84,18 @@ public static class TenhouLog
         var hands = new Tile[4][];
         var draws = new int[4][];
         var discards = new int[4][];
+        var drawEvents = new Event[4][];
+        var discardEvents = new Event[4][];
         for (int seat = 0; seat < 4; seat++)
         {
             int baseIdx = 4 + seat * 3;
             hands[seat] = ParseTileArray(kyoku[baseIdx]);
-            draws[seat] = ParseIntTileArray(kyoku[baseIdx + 1]);
-            discards[seat] = ParseIntTileArray(kyoku[baseIdx + 2]);
+            var (drawTiles, drawEv) = ParseEventArray(kyoku[baseIdx + 1]);
+            var (discTiles, discEv) = ParseEventArray(kyoku[baseIdx + 2]);
+            draws[seat] = drawTiles;
+            discards[seat] = discTiles;
+            drawEvents[seat] = drawEv;
+            discardEvents[seat] = discEv;
         }
 
         return new Kyoku(
@@ -95,7 +107,9 @@ public static class TenhouLog
             DoraIndicators: dora.ToArray(),
             StartingHands: hands,
             DrawTiles: draws,
-            DiscardTiles: discards);
+            DiscardTiles: discards,
+            DrawEvents: drawEvents,
+            DiscardEvents: discardEvents);
     }
 
     private static Tile[] ParseTileArray(JsonElement arr)
@@ -109,15 +123,71 @@ public static class TenhouLog
         return result.ToArray();
     }
 
-    private static int[] ParseIntTileArray(JsonElement arr)
+    /// <summary>
+    /// Parse a draw-or-discard slot array. Numbers are plain tile IDs; strings are
+    /// event tags ("r60" = riichi discard, "p..." = pon call, "c..." = chi call,
+    /// "m..."/"k..."/"a..." = kan variants, "agari"/"r"/etc.). Each string carries
+    /// a 136-ID suffix where applicable — we extract the trailing integer block.
+    /// The output arrays are parallel: tiles[i] is the tile at position i, and
+    /// events[i] is the event type and raw tag (Kind=None for plain tiles).
+    /// </summary>
+    private static (int[] tiles, Event[] events) ParseEventArray(JsonElement arr)
     {
-        var result = new List<int>();
+        var tiles = new List<int>();
+        var events = new List<Event>();
         foreach (var el in arr.EnumerateArray())
         {
             if (el.ValueKind == JsonValueKind.Number)
-                result.Add(From136(el.GetInt32()).Id);
+            {
+                int id = From136(el.GetInt32()).Id;
+                tiles.Add(id);
+                events.Add(new Event(EventKind.None, "", id));
+            }
+            else if (el.ValueKind == JsonValueKind.String)
+            {
+                string tag = el.GetString() ?? "";
+                var (kind, tileId) = ParseEventTag(tag);
+                if (tileId >= 0)
+                {
+                    tiles.Add(tileId);
+                    events.Add(new Event(kind, tag, tileId));
+                }
+                else
+                {
+                    // Pure event string with no tile payload — record event-only slot
+                    // with tile id = -1. Consumers can filter these out.
+                    tiles.Add(-1);
+                    events.Add(new Event(kind, tag, -1));
+                }
+            }
         }
-        return result.ToArray();
+        return (tiles.ToArray(), events.ToArray());
+    }
+
+    internal static (EventKind kind, int tileId) ParseEventTag(string tag)
+    {
+        if (string.IsNullOrEmpty(tag)) return (EventKind.Other, -1);
+
+        char prefix = char.ToLowerInvariant(tag[0]);
+        EventKind kind = prefix switch
+        {
+            'r' => EventKind.Riichi,
+            'p' => EventKind.Pon,
+            'c' => EventKind.Chi,
+            'm' or 'k' or 'a' => EventKind.Kan,
+            _ => EventKind.Other,
+        };
+
+        // Extract leading digit block after the prefix char(s). Tenhou tags are
+        // concatenations like "r60" or "c123456"; we take the first integer block.
+        int start = 0;
+        while (start < tag.Length && !char.IsDigit(tag[start])) start++;
+        int end = start;
+        while (end < tag.Length && char.IsDigit(tag[end])) end++;
+        if (start == end) return (kind, -1);
+        if (!int.TryParse(tag.AsSpan(start, end - start), out int pai136)) return (kind, -1);
+        if (pai136 < 0 || pai136 >= 136) return (kind, -1);
+        return (kind, From136(pai136).Id);
     }
 
     /// <summary>
