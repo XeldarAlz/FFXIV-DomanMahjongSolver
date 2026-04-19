@@ -5,8 +5,8 @@ Thanks for taking an interest. This is a small solo project, but PRs are welcome
 ## Quick start
 
 ```bash
-git clone https://github.com/XeldarAlz/FFXIV-MahjongAI.git
-cd FFXIV-MahjongAI
+git clone https://github.com/XeldarAlz/FFXIV-DomanMahjongSolver.git
+cd FFXIV-DomanMahjongSolver
 dotnet restore DomanMahjongAI.sln
 dotnet build   DomanMahjongAI.sln
 dotnet test    DomanMahjongAI.sln
