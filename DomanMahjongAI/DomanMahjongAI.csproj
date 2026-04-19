@@ -2,7 +2,7 @@
   <PropertyGroup>
     <Version>0.0.0.5</Version>
     <Description>Autonomous AI for FFXIV Doman Mahjong — heuristic + ISMCTS policy with Bayesian opponent modeling.</Description>
-    <PackageProjectUrl>https://github.com/XeldarAlz/FFXIV-MahjongAI</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/XeldarAlz/FFXIV-DomanMahjongSolver</PackageProjectUrl>
     <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
     <IsPackable>false</IsPackable>
   </PropertyGroup>

@@ -24,7 +24,7 @@ That's it. Three buttons: **Off / Hints / Auto-play**.
 1. Open in-game: `/xlsettings` → **Experimental** tab.
 2. Find **Custom Plugin Repositories** and paste this URL:
    ```
-   https://raw.githubusercontent.com/XeldarAlz/FFXIV-MahjongAI/main/repo/repo.json
+   https://raw.githubusercontent.com/XeldarAlz/FFXIV-DomanMahjongSolver/main/repo/repo.json
    ```
 3. Tick the checkbox next to it, press **Save and Close**.
 4. Open `/xlplugins`, search **Doman Mahjong Solver**, press **Install**.
@@ -78,7 +78,7 @@ Use hints mode unless you've thought carefully about the risk.
 
 - **"Plugin failed to load"** after installing. You may still have a dev copy loaded from an older install. Open `/xlsettings` → Experimental → Dev Plugin Locations and remove anything that points at a local folder for this plugin. Then reinstall.
 - **Icon doesn't show** in the plugin list. Dalamud caches the repo; click the refresh icon next to the custom repo entry in Settings → Experimental, or restart the game.
-- **Anything else.** Report it at https://github.com/XeldarAlz/FFXIV-MahjongAI/issues with the text of the error message.
+- **Anything else.** Report it at https://github.com/XeldarAlz/FFXIV-DomanMahjongSolver/issues with the text of the error message.
 
 ## License
 
@@ -101,7 +101,7 @@ dotnet test  DomanMahjongAI.sln
 ### Layout
 
 ```
-FFXIV-MahjongAI/
+FFXIV-DomanMahjongSolver/
 ├── DomanMahjongAI/       Plugin entry · UI · dispatch · reader
 │   └── images/icon.png   Plugin icon
 ├── Engine/               Core mahjong primitives
