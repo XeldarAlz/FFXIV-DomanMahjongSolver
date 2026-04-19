@@ -6,6 +6,7 @@ using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using DomanMahjongAI.Commands;
+using DomanMahjongAI.GameState;
 using DomanMahjongAI.UI;
 
 namespace DomanMahjongAI;
@@ -28,12 +29,17 @@ public sealed class Plugin : IDalamudPlugin
     public readonly WindowSystem WindowSystem = new("DomanMahjongAI");
     public Configuration Configuration { get; }
     public DebugOverlay DebugOverlay { get; }
+    public AddonEmjReader AddonReader { get; }
+    public StateAggregator Aggregator { get; }
 
     private readonly MjAutoCommand command;
 
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+
+        AddonReader = new AddonEmjReader(this);
+        Aggregator = new StateAggregator(AddonReader);
 
         DebugOverlay = new DebugOverlay(this);
         WindowSystem.AddWindow(DebugOverlay);
@@ -55,6 +61,8 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleDebugOverlay;
         WindowSystem.RemoveAllWindows();
         DebugOverlay.Dispose();
+        Aggregator.Dispose();
+        AddonReader.Dispose();
     }
 
     public void ToggleDebugOverlay() => DebugOverlay.Toggle();

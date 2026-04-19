@@ -55,6 +55,42 @@ public sealed class DebugOverlay : Window, IDisposable
         ImGui.TextUnformatted($"Policy tier: {cfg.PolicyTier}");
 
         ImGui.Separator();
-        ImGui.TextDisabled("Engine, opponent model, and policy output will render here.");
+        DrawAddonPanel();
+    }
+
+    private void DrawAddonPanel()
+    {
+        ImGui.TextUnformatted("AddonEmj status");
+        ImGui.Separator();
+
+        var obs = plugin.AddonReader.Poll();
+
+        if (!obs.Present)
+        {
+            ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f),
+                "Addon \"Emj\" not found. Open a Doman Mahjong match in-game.");
+            if (obs.LastLifecycleEvent is not null)
+                ImGui.TextDisabled($"last event: {obs.LastLifecycleEvent}");
+            return;
+        }
+
+        ImGui.TextUnformatted($"Address:  0x{obs.Address:X}");
+        ImGui.TextUnformatted($"Visible:  {obs.IsVisible}");
+        ImGui.TextUnformatted($"Size:     {obs.Width} x {obs.Height}");
+        ImGui.TextUnformatted($"Event:    {obs.LastLifecycleEvent ?? "(none)"}");
+
+        var age = TimeSpan.FromTicks(DateTime.UtcNow.Ticks - obs.LastSeenUtcTicks);
+        ImGui.TextUnformatted($"Last seen: {age.TotalMilliseconds:F0} ms ago");
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Struct offsets are not yet reverse-engineered — snapshot fields below are placeholders.");
+
+        var snap = plugin.Aggregator.Latest;
+        if (snap is not null)
+        {
+            ImGui.Separator();
+            ImGui.TextUnformatted($"Schema v{snap.SchemaVersion}");
+            ImGui.TextUnformatted($"Our seat: {snap.OurSeat}  |  dealer: {snap.DealerSeat}  |  wall: {snap.WallRemaining}");
+        }
     }
 }
