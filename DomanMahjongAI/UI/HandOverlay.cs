@@ -66,7 +66,11 @@ public sealed class HandOverlay : IDisposable
         if (!unit->IsVisible) return;
 
         var snap = plugin.AddonReader.TryBuildSnapshot();
-        if (snap is null || snap.Hand.Count != 14) return;
+        // Need at least a few tiles to talk about a hand. We no longer require
+        // exactly 14 — after calls (chi/pon/kan) the hand row is shorter because
+        // some tiles live in the meld area. As long as the policy gives us a
+        // discard target and the tile is actually in the hand row, highlight it.
+        if (snap is null || snap.Hand.Count < 2) return;
 
         ActionChoice choice;
         try { choice = plugin.Policy.Choose(snap); }
@@ -74,31 +78,34 @@ public sealed class HandOverlay : IDisposable
 
         if (choice.DiscardTile is null) return;
         int slot = InputDispatcher.FindSlotOfTile(choice.DiscardTile.Value, snap.Hand);
-        if (slot is < 0 or > 13) return;
+        if (slot < 0 || slot >= snap.Hand.Count) return;
 
-        var rects = TryFindHandTileRects(unit);
+        var rects = TryFindHandTileRects(unit, snap.Hand.Count);
         if (rects is null || slot >= rects.Count) return;
 
-        // Dalamud runs ImGui with multi-viewports enabled: GetForegroundDrawList
-        // accepts desktop-space coordinates, but AtkUnitBase X/Y and node offsets
-        // are game-window-local. Add the main viewport's desktop position so the
-        // highlight tracks the game window when it's not at desktop (0, 0).
+        // Keep the viewport offset defensively — in single-viewport mode Pos is
+        // (0, 0) so this is a no-op, in multi-viewport mode it's the desktop
+        // offset of the game window.
         var viewportOffset = ImGui.GetMainViewport().Pos;
         var rect = rects[slot];
         rect.Pos += viewportOffset;
-        DrawHighlight(rect, isDrawnTile: slot == 13);
+        // Slot N-1 is conventionally the last-drawn tile (often slightly offset
+        // from the main row). Tag it amber so tsumogiri reads distinctly.
+        bool isDrawnTile = slot == snap.Hand.Count - 1;
+        DrawHighlight(rect, isDrawnTile);
     }
 
-    private static unsafe List<(Vector2 Pos, Vector2 Size)>? TryFindHandTileRects(AtkUnitBase* unit)
+    private static unsafe List<(Vector2 Pos, Vector2 Size)>? TryFindHandTileRects(AtkUnitBase* unit, int expected)
     {
         var uld = unit->UldManager;
         if (uld.NodeList == null || uld.NodeListCount <= 0) return null;
 
-        // Collect tile-shaped visible nodes with their absolute screen rects.
+        // Walk tile-shaped visible nodes and stamp each with its absolute rect.
+        // The parent-chain walk already incorporates the root node's position
+        // and all scale factors — so we do NOT add unit->X/Y or multiply by
+        // unit->Scale again here. Doing so caused a double-count when the addon
+        // was dragged away from the top-left of the game window.
         var tiles = new List<(float Y, Vector2 Pos, Vector2 Size)>(32);
-        float addonScale = unit->Scale <= 0 ? 1f : unit->Scale;
-        float addonX = unit->X;
-        float addonY = unit->Y;
 
         for (int i = 0; i < uld.NodeListCount; i++)
         {
@@ -110,31 +117,25 @@ public sealed class HandOverlay : IDisposable
             float h = n->Height;
             if (w < MinTileWidth || w > MaxTileWidth) continue;
             if (h < MinTileHeight || h > MaxTileHeight) continue;
-            // Tiles are upright — skip nodes that are clearly wider than tall.
-            if (w > h) continue;
+            if (w > h) continue; // tiles are taller than wide
 
-            // Compose absolute (unit-local) position by walking the parent chain.
             AbsolutePosition(n, out float nx, out float ny, out float sx, out float sy);
 
-            float screenX = addonX + nx * addonScale;
-            float screenY = addonY + ny * addonScale;
-            float screenW = w * sx * addonScale;
-            float screenH = h * sy * addonScale;
-
-            tiles.Add((ny, new Vector2(screenX, screenY), new Vector2(screenW, screenH)));
+            tiles.Add((ny,
+                new Vector2(nx, ny),
+                new Vector2(w * sx, h * sy)));
         }
 
-        if (tiles.Count < 14) return null;
+        if (tiles.Count < expected) return null;
 
-        // Group by Y and find the tightest row of 14. Sort ascending, slide a
-        // 14-wide window; pick the window with the smallest Y span.
+        // Cluster by Y: find the tightest horizontal row of `expected` tiles.
         tiles.Sort((a, b) => a.Y.CompareTo(b.Y));
 
         int bestStart = -1;
         float bestSpan = float.MaxValue;
-        for (int i = 0; i + 14 <= tiles.Count; i++)
+        for (int i = 0; i + expected <= tiles.Count; i++)
         {
-            float span = tiles[i + 13].Y - tiles[i].Y;
+            float span = tiles[i + expected - 1].Y - tiles[i].Y;
             if (span < bestSpan)
             {
                 bestSpan = span;
@@ -144,19 +145,21 @@ public sealed class HandOverlay : IDisposable
 
         if (bestStart < 0 || bestSpan > MaxRowYSpread) return null;
 
-        // Take those 14, sort left-to-right — that's hand slot 0..13.
-        var selected = new List<(Vector2 Pos, Vector2 Size)>(14);
-        for (int i = bestStart; i < bestStart + 14; i++)
+        var selected = new List<(Vector2 Pos, Vector2 Size)>(expected);
+        for (int i = bestStart; i < bestStart + expected; i++)
             selected.Add((tiles[i].Pos, tiles[i].Size));
         selected.Sort((a, b) => a.Pos.X.CompareTo(b.Pos.X));
         return selected;
     }
 
     /// <summary>
-    /// Walk <paramref name="node"/>'s parent chain to compute its position and
-    /// accumulated scale relative to the addon root. Coordinates at each level
-    /// are parent-relative, so child offset is added *after* the parent's scale
-    /// has applied to it.
+    /// Walk the parent chain and return the node's absolute position + accumulated
+    /// scale, expressed in the same coordinate space that <see cref="ImGui.GetForegroundDrawList()"/>
+    /// expects (game-window-local, before the multi-viewport desktop offset).
+    /// The recurrence mirrors the standard Dalamud overlay pattern: at each step,
+    /// scale the child's running offset by the parent's scale, then add the parent's
+    /// own translation. After the walk the result already includes the root node's
+    /// position — <em>do not</em> add <c>unit-&gt;X</c> again on top.
     /// </summary>
     private static unsafe void AbsolutePosition(AtkResNode* node, out float x, out float y, out float scaleX, out float scaleY)
     {
