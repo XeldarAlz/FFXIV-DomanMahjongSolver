@@ -24,7 +24,8 @@ public static class DiscardScorer
         double UkeireWeighted,
         double Dora,
         double Yakuhai,
-        double IsolatedTerminal)
+        double IsolatedTerminal,
+        double DealInCost)
     {
         public static Weights Default => new(
             Shanten: 100.0,           // dominates — shanten regressions basically rejected
@@ -32,7 +33,8 @@ public static class DiscardScorer
             UkeireWeighted: 1.0,
             Dora: 4.0,
             Yakuhai: 2.0,
-            IsolatedTerminal: 0.5);
+            IsolatedTerminal: 0.5,
+            DealInCost: 0.001);       // points × probability → small scaling factor
     }
 
     public readonly record struct ScoredDiscard(
@@ -42,14 +44,18 @@ public static class DiscardScorer
         int UkeireKinds,
         int UkeireWeighted,
         int DoraRetained,
-        int YakuhaiRetained);
+        int YakuhaiRetained,
+        double DealInCost);
 
     public static ScoredDiscard[] Score(
         StateSnapshot state,
         Weights? weights = null,
-        Wall? wall = null)
+        Wall? wall = null,
+        Placement.PlacementAdjuster.Weights? placement = null,
+        Opponents.OpponentModel? opponentModel = null)
     {
         var w = weights ?? Weights.Default;
+        var p = placement ?? Placement.PlacementAdjuster.ComputeFor(state);
 
         var hand = BuildHand(state);
         if (hand.ClosedTileCount + hand.OpenMelds.Count * 3 != 14)
@@ -65,18 +71,21 @@ public static class DiscardScorer
             int doraRetained = CountDora(hand, u.Discard, state.DoraIndicators);
             int yakuhaiRetained = CountYakuhai(hand, u.Discard, 27 + state.RoundWind, state);
 
+            double dealInCost = opponentModel?.ExpectedDealInCost(u.Discard.Id) ?? 0.0;
+
             double score =
                 -w.Shanten * Math.Max(0, u.ShantenAfter)
-                + w.UkeireKinds * u.AcceptedKinds.Length
-                + w.UkeireWeighted * u.WeightedCount
-                + w.Dora * doraRetained
-                + w.Yakuhai * yakuhaiRetained
-                + (IsIsolatedTerminalOrHonor(hand, u.Discard) ? w.IsolatedTerminal : 0.0);
+                + w.UkeireKinds * u.AcceptedKinds.Length * p.UkeireMultiplier
+                + w.UkeireWeighted * u.WeightedCount * p.UkeireMultiplier
+                + w.Dora * doraRetained * p.HandValueMultiplier
+                + w.Yakuhai * yakuhaiRetained * p.HandValueMultiplier
+                + (IsIsolatedTerminalOrHonor(hand, u.Discard) ? w.IsolatedTerminal * p.DangerMultiplier : 0.0)
+                - w.DealInCost * dealInCost * p.DangerMultiplier;
 
             result[i] = new ScoredDiscard(
                 u.Discard, score, u.ShantenAfter,
                 u.AcceptedKinds.Length, u.WeightedCount,
-                doraRetained, yakuhaiRetained);
+                doraRetained, yakuhaiRetained, dealInCost);
         }
 
         Array.Sort(result, (a, b) => b.Score.CompareTo(a.Score));

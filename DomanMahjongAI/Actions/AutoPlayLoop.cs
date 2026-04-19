@@ -110,9 +110,12 @@ public sealed class AutoPlayLoop : IDisposable
         lastHandCount = hand;
 
         // Call prompt: fire on state→15 transition (prevents re-firing while prompt stays).
+        // Currently the policy always returns Pass because LegalActions.PonCandidates etc.
+        // aren't populated yet (M4 RE owed). When they are, the policy returns Pon/Chi
+        // when CallEvaluator accepts — we'd need to dispatch Call instead of Pass here.
         if (state == 15 && prevState != 15)
         {
-            SchedulePass();
+            ScheduleCallDecision();
             return;
         }
 
@@ -187,6 +190,51 @@ public sealed class AutoPlayLoop : IDisposable
             {
                 Plugin.Log.Error($"AutoPlayLoop pass error: {ex}");
                 LastActionDescription = $"pass exception: {ex.Message}";
+            }
+            finally
+            {
+                actionPending = false;
+            }
+        }, delay);
+    }
+
+    private void ScheduleCallDecision()
+    {
+        actionPending = true;
+        var delay = HumanTiming.RandomDelay(medianMs: 700);
+        _ = Plugin.Framework.RunOnTick(() =>
+        {
+            try
+            {
+                var snap = plugin.AddonReader.TryBuildSnapshot();
+                if (snap is null)
+                {
+                    LastActionDescription = "call: no snapshot";
+                    return;
+                }
+
+                var choice = plugin.Policy.Choose(snap);
+                InputDispatcher.DispatchResult result;
+                switch (choice.Kind)
+                {
+                    case ActionKind.Pon:
+                    case ActionKind.Chi:
+                    case ActionKind.MinKan:
+                    case ActionKind.ShouMinKan:
+                        result = plugin.Dispatcher.DispatchCall();
+                        LastActionDescription = $"auto-{choice.Kind.ToString().ToLowerInvariant()} → {result}";
+                        break;
+                    default:
+                        result = plugin.Dispatcher.DispatchPass();
+                        LastActionDescription = $"auto-pass → {result}";
+                        break;
+                }
+                lastActionAt = DateTime.UtcNow;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"AutoPlayLoop call decision error: {ex}");
+                LastActionDescription = $"call exception: {ex.Message}";
             }
             finally
             {

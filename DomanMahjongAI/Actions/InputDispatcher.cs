@@ -78,18 +78,20 @@ public sealed class InputDispatcher
     }
 
     /// <summary>
-    /// Pass on a call prompt. Pass is typically the rightmost option (option 1 in a
-    /// 2-button prompt). But evidence suggests pon/pass and chi/pass may order
-    /// differently, so we try option 1 first; if FireCallback rejects (returns false),
-    /// fall back to option 0. At most one of the two is a real Pass; the other either
-    /// triggers a call (undesired) or gets rejected.
+    /// Pass on a call prompt. Option 1 = Pass (rightmost button). Confirmed by observation:
+    /// pon/pass and chi/pass prompts both show [Call][Pass] order, so pass is always opt 1.
+    /// No fallback — if this fails we return HookFailed; fallback to option 0 would
+    /// accidentally fire the call action (undesired).
     /// </summary>
-    public DispatchResult DispatchPass()
-    {
-        var r = DispatchCallOption(1);
-        if (r == DispatchResult.HookFailed) r = DispatchCallOption(0);
-        return r;
-    }
+    public DispatchResult DispatchPass() => DispatchCallOption(1);
+
+    /// <summary>
+    /// Accept a pon/chi/kan call by clicking the leftmost button (option 0). The game
+    /// knows from context which call is offered — we just fire option 0. For chi
+    /// prompts with multiple sequence variants, option 0 picks the first (lowest)
+    /// sequence; we'd need a specific override for non-default variants.
+    /// </summary>
+    public DispatchResult DispatchCall() => DispatchCallOption(0);
 
     /// <summary>
     /// Find the slot index (0..13) of a given tile in the hand. Returns -1 if not found.

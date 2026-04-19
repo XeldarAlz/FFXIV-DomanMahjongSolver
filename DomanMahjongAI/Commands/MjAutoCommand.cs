@@ -481,8 +481,7 @@ public sealed class MjAutoCommand : IDisposable
             return;
         }
 
-        plugin.Configuration.PolicyTier = tier == "eff" ? "efficiency" : "mcts";
-        plugin.Configuration.Save();
+        plugin.SetPolicy(tier == "eff" ? "efficiency" : "mcts");
         Plugin.ChatGui.Print($"[MjAuto] Policy tier: {plugin.Configuration.PolicyTier}");
     }
 }

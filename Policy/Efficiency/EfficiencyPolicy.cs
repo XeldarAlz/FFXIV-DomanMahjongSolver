@@ -10,6 +10,7 @@ namespace DomanMahjongAI.Policy.Efficiency;
 public sealed class EfficiencyPolicy : IPolicy
 {
     private readonly DiscardScorer.Weights weights;
+    private readonly Opponents.OpponentModel opponentModel = new();
 
     public EfficiencyPolicy(DiscardScorer.Weights? weights = null)
     {
@@ -28,13 +29,27 @@ public sealed class EfficiencyPolicy : IPolicy
         if (legal.Can(ActionFlags.Ron))
             return ActionChoice.DeclareRon("ron legal");
 
-        // Defer all call decisions (pon/chi/kan) to M8's CallEvaluator.
+        // Call decision via CallEvaluator.
         if (legal.Can(ActionFlags.Pon) || legal.Can(ActionFlags.Chi) ||
             legal.Can(ActionFlags.MinKan) || legal.Can(ActionFlags.ShouMinKan) ||
             legal.Can(ActionFlags.AnKan))
         {
+            var callDecision = CallEvaluator.Evaluate(state);
+            if (callDecision.Accept && callDecision.Chosen is { } cand)
+            {
+                var kind = cand.Kind switch
+                {
+                    MeldKind.Pon => ActionKind.Pon,
+                    MeldKind.Chi => ActionKind.Chi,
+                    MeldKind.AnKan => ActionKind.AnKan,
+                    MeldKind.MinKan => ActionKind.MinKan,
+                    MeldKind.ShouMinKan => ActionKind.ShouMinKan,
+                    _ => ActionKind.Pass,
+                };
+                return new ActionChoice(kind, Call: cand, Reasoning: $"call: {callDecision.Reason}");
+            }
             if (legal.Can(ActionFlags.Pass))
-                return ActionChoice.Pass("call decision owed to M8");
+                return ActionChoice.Pass($"pass: {callDecision.Reason}");
         }
 
         // Defer riichi decision to M8's RiichiEvaluator; for now just discard normally.
@@ -43,11 +58,45 @@ public sealed class EfficiencyPolicy : IPolicy
 
         if (legal.Can(ActionFlags.Discard))
         {
-            var scored = DiscardScorer.Score(state, weights);
+            opponentModel.Update(state);
+            var scored = DiscardScorer.Score(state, weights, opponentModel: opponentModel);
             if (scored.Length == 0)
                 return ActionChoice.Pass("no legal discards found");
 
             var best = scored[0];
+            int currentShanten = scored[0].ShantenAfter == 0 ? 0 : scored[0].ShantenAfter;
+
+            // Push/fold check: if the scorer's top pick is too dangerous, switch to a
+            // safe-discard regime — prefer cuts with minimal deal-in cost regardless of
+            // tenpai progression.
+            var pushFold = PushFoldEvaluator.Evaluate(state, currentShanten, opponentModel, best.Discard);
+            if (pushFold.Fold)
+            {
+                var safestFirst = scored.OrderBy(sd => sd.DealInCost).ToArray();
+                if (safestFirst.Length > 0)
+                {
+                    best = safestFirst[0];
+                }
+            }
+
+            // Consider riichi: if legal and evaluator says declare.
+            if (legal.Can(ActionFlags.Riichi))
+            {
+                var riichi = RiichiEvaluator.Evaluate(
+                    state,
+                    intendedDiscard: best.Discard,
+                    weightedUkeireAfterDiscard: best.UkeireWeighted,
+                    acceptedKindsAfterDiscard: best.UkeireKinds,
+                    shantenAfterDiscard: best.ShantenAfter);
+
+                if (riichi.Declare)
+                {
+                    return ActionChoice.DeclareRiichi(
+                        best.Discard,
+                        $"riichi on {best.Discard}: {riichi.Reason}");
+                }
+            }
+
             var reasoning =
                 $"best={best.Discard} shanten={best.ShantenAfter} ukeire={best.UkeireKinds}kinds/{best.UkeireWeighted}w " +
                 $"dora={best.DoraRetained} yakuhai={best.YakuhaiRetained} score={best.Score:F1}";

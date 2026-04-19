@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download Dalamud dev build
+        shell: pwsh
+        run: |
+          $dalamudUrl = "https://goatcorp.github.io/dalamud-distrib/latest.zip"
+          $dalamudDir = "$env:AppData\XIVLauncher\addon\Hooks\dev"
+          New-Item -ItemType Directory -Force -Path $dalamudDir | Out-Null
+          Invoke-WebRequest -Uri $dalamudUrl -OutFile dalamud.zip
+          Expand-Archive -Path dalamud.zip -DestinationPath $dalamudDir -Force
+          Remove-Item dalamud.zip
+
+      - name: Restore
+        run: dotnet restore DomanMahjongAI.sln
+
+      - name: Build (Release)
+        run: dotnet build DomanMahjongAI.sln --configuration Release --no-restore
+
+      - name: Run Engine tests
+        run: dotnet test tests/Engine.Tests/Engine.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal"
+
+      - name: Run Policy tests
+        run: dotnet test tests/Policy.Tests/Policy.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal"
+
+      - name: Upload plugin artifact
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DomanMahjongAI-plugin
+          path: DomanMahjongAI/bin/Release/DomanMahjongAI/latest.zip
+          if-no-files-found: warn

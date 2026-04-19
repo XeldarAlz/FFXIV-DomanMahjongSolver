@@ -10,6 +10,7 @@ using DomanMahjongAI.Commands;
 using DomanMahjongAI.GameState;
 using DomanMahjongAI.Policy;
 using DomanMahjongAI.Policy.Efficiency;
+using DomanMahjongAI.Policy.Mcts;
 using DomanMahjongAI.UI;
 
 namespace DomanMahjongAI;
@@ -34,7 +35,9 @@ public sealed class Plugin : IDalamudPlugin
     public DebugOverlay DebugOverlay { get; }
     public AddonEmjReader AddonReader { get; }
     public StateAggregator Aggregator { get; }
-    public IPolicy Policy { get; }
+    public IPolicy Policy { get; private set; }
+    public IPolicy EfficiencyPolicyInstance { get; }
+    public IPolicy IsmctsPolicyInstance { get; }
     public InputEventLogger EventLogger { get; }
     public InputDispatcher Dispatcher { get; } = new();
     public AutoPlayLoop AutoPlay { get; }
@@ -47,7 +50,9 @@ public sealed class Plugin : IDalamudPlugin
 
         AddonReader = new AddonEmjReader(this);
         Aggregator = new StateAggregator(AddonReader);
-        Policy = new EfficiencyPolicy();
+        EfficiencyPolicyInstance = new EfficiencyPolicy();
+        IsmctsPolicyInstance = new IsmctsPolicy();
+        Policy = Configuration.PolicyTier == "mcts" ? IsmctsPolicyInstance : EfficiencyPolicyInstance;
         EventLogger = new InputEventLogger(AddonReader);
         AutoPlay = new AutoPlayLoop(this);
 
@@ -78,4 +83,12 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     public void ToggleDebugOverlay() => DebugOverlay.Toggle();
+
+    public void SetPolicy(string tier)
+    {
+        var t = tier.ToLowerInvariant();
+        Policy = t == "mcts" ? IsmctsPolicyInstance : EfficiencyPolicyInstance;
+        Configuration.PolicyTier = t == "mcts" ? "mcts" : "efficiency";
+        Configuration.Save();
+    }
 }
