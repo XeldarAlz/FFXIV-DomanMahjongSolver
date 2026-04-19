@@ -13,8 +13,24 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="images\icon.png">
+    <Content Include="images\icon.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    </Content>
   </ItemGroup>
+
+  <!--
+    DalamudPackager doesn't include our images/ folder in latest.zip.
+    Patch it in afterwards so the plugin icon ships with the release.
+  -->
+  <Target Name="BundleIcon"
+          AfterTargets="DefaultDalamudPackagerRelease"
+          Condition="'$(Configuration)' == 'Release'">
+    <PropertyGroup>
+      <ZipPath>$(ProjectDir)$(OutputPath)$(AssemblyName)\latest.zip</ZipPath>
+      <IconPath>$(ProjectDir)images\icon.png</IconPath>
+    </PropertyGroup>
+    <Exec WorkingDirectory="$(ProjectDir)"
+          Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)bundle_icon.ps1&quot; -ZipPath &quot;$(ZipPath)&quot; -IconPath &quot;$(IconPath)&quot;"
+          Condition="Exists('$(ZipPath)') and Exists('$(IconPath)')" />
+  </Target>
 </Project>
