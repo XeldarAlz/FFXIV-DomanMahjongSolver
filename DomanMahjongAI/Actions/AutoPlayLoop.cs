@@ -60,8 +60,11 @@ public sealed class AutoPlayLoop : IDisposable
         var cfg = plugin.Configuration;
         if (!cfg.TosAccepted || !cfg.AutomationArmed || cfg.SuggestionOnly) return;
         if (actionPending) return;
-        // Rate-limit: at least 200ms between dispatches regardless of state changes.
-        if ((DateTime.UtcNow - lastActionAt).TotalMilliseconds < 200) return;
+        // Rate-limit between dispatches. Longer cooldown on call-prompt retries to
+        // avoid spamming the game if our pass button guess is wrong.
+        double sinceMs = (DateTime.UtcNow - lastActionAt).TotalMilliseconds;
+        int minGap = lastStateCode == 15 ? 2500 : 200;
+        if (sinceMs < minGap) return;
 
         // Read the Emj addon.
         var ptr = Plugin.GameGui.GetAddonByName("Emj");
@@ -109,11 +112,11 @@ public sealed class AutoPlayLoop : IDisposable
         lastStateCode = state;
         lastHandCount = hand;
 
-        // Call prompt: fire on state→15 transition (prevents re-firing while prompt stays).
-        // Currently the policy always returns Pass because LegalActions.PonCandidates etc.
-        // aren't populated yet (M4 RE owed). When they are, the policy returns Pon/Chi
-        // when CallEvaluator accepts — we'd need to dispatch Call instead of Pass here.
-        if (state == 15 && prevState != 15)
+        // Call prompt: fire whenever state == 15 and we're not in cooldown.
+        // Previously guarded on transition only; that left us stuck if the first
+        // dispatch was rejected by the game (HookFailed) or clicked the wrong
+        // button on a multi-chi prompt. Retry with a generous cooldown instead.
+        if (state == 15)
         {
             ScheduleCallDecision();
             return;
@@ -267,6 +270,7 @@ public sealed class AutoPlayLoop : IDisposable
                         LastActionDescription = $"auto-pass → {result}";
                         break;
                 }
+                Plugin.Log.Info($"[AutoPlayLoop] call-prompt dispatch: {LastActionDescription}");
                 lastActionAt = DateTime.UtcNow;
             }
             catch (Exception ex)

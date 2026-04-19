@@ -9,7 +9,7 @@ namespace DomanMahjongAI.Commands;
 public sealed class MjAutoCommand : IDisposable
 {
     private const string Primary = "/mjauto";
-    private const string HelpText = "Open Doman Mahjong AI. Subcommands: on | off | open | debug | policy <eff|mcts> | dump | addons [filter] | dumpmem [offset] [length] | atkvalues | agent [length] | emj [length] | log <on|off> | testdiscard <slot> | autodiscard";
+    private const string HelpText = "Open Doman Mahjong AI. Subcommands: on | off | open | debug | policy <eff|mcts> | pass <N> | dump | addons [filter] | dumpmem [offset] [length] | atkvalues | agent [length] | emj [length] | log <on|off> | testdiscard <slot> | autodiscard";
     // Note: removed /mjauto scan and /mjauto followptr — both dereferenced untrusted pointers and crashed the client.
 
     private readonly Plugin plugin;
@@ -94,6 +94,10 @@ public sealed class MjAutoCommand : IDisposable
                 HandleTestDiscard(rest);
                 break;
 
+            case "pass":
+                HandlePass(rest);
+                break;
+
             case "autodiscard":
                 HandleAutoDiscard();
                 break;
@@ -148,6 +152,22 @@ public sealed class MjAutoCommand : IDisposable
                 var result = plugin.Dispatcher.DispatchDiscard(slot);
                 Plugin.ChatGui.Print($"[MjAuto] dispatch result: {result}");
             }, delay);
+        });
+    }
+
+    private void HandlePass(string arg)
+    {
+        // Manual override for when the auto pass clicks the wrong option
+        // (multi-chi prompts confuse our hardcoded pass=option 1).
+        if (!int.TryParse(arg.Trim(), out int opt) || opt is < 0 or > 5)
+        {
+            Plugin.ChatGui.PrintError("[MjAuto] Usage: /mjauto pass <0..5>  (0=leftmost, higher=rightward; rightmost = pass)");
+            return;
+        }
+        Plugin.Framework.RunOnFrameworkThread(() =>
+        {
+            var result = plugin.Dispatcher.DispatchCallOption(opt);
+            Plugin.ChatGui.Print($"[MjAuto] pass opt={opt} → {result}");
         });
     }
 
