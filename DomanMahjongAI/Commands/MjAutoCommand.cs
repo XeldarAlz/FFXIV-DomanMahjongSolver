@@ -9,7 +9,7 @@ namespace DomanMahjongAI.Commands;
 public sealed class MjAutoCommand : IDisposable
 {
     private const string Primary = "/mjauto";
-    private const string HelpText = "Doman Mahjong AI. Subcommands: on | off | debug | policy <eff|mcts> | dump | addons [filter] | dumpmem [offset] [length] | atkvalues | agent [length] | emj [length]";
+    private const string HelpText = "Doman Mahjong AI. Subcommands: on | off | debug | policy <eff|mcts> | dump | addons [filter] | dumpmem [offset] [length] | atkvalues | agent [length] | emj [length] | log <on|off> | testdiscard <slot> | autodiscard";
     // Note: removed /mjauto scan and /mjauto followptr — both dereferenced untrusted pointers and crashed the client.
 
     private readonly Plugin plugin;
@@ -85,8 +85,109 @@ public sealed class MjAutoCommand : IDisposable
                 DumpEmjModule(rest);
                 break;
 
+            case "log":
+                HandleLog(rest);
+                break;
+
+            case "testdiscard":
+                HandleTestDiscard(rest);
+                break;
+
+            case "autodiscard":
+                HandleAutoDiscard();
+                break;
+
+
             default:
                 Plugin.ChatGui.PrintError($"[MjAuto] Unknown subcommand: {sub}. {HelpText}");
+                break;
+        }
+    }
+
+    private void HandleAutoDiscard()
+    {
+        Plugin.Framework.RunOnFrameworkThread(() =>
+        {
+            var snap = plugin.AddonReader.TryBuildSnapshot();
+            if (snap is null)
+            {
+                Plugin.ChatGui.PrintError("[MjAuto] no snapshot — not in a match.");
+                return;
+            }
+
+            if (snap.Hand.Count != 14)
+            {
+                Plugin.ChatGui.PrintError(
+                    $"[MjAuto] hand has {snap.Hand.Count} tiles — not a discard state. Wait for your turn.");
+                return;
+            }
+
+            var choice = plugin.Policy.Choose(snap);
+            if (choice.Kind != DomanMahjongAI.Policy.ActionKind.Discard || choice.DiscardTile is null)
+            {
+                Plugin.ChatGui.PrintError(
+                    $"[MjAuto] policy returned {choice.Kind} — autodiscard only handles Discard. {choice.Reasoning}");
+                return;
+            }
+
+            var tile = choice.DiscardTile.Value;
+            int slot = Actions.InputDispatcher.FindSlotOfTile(tile, snap.Hand);
+            if (slot < 0)
+            {
+                Plugin.ChatGui.PrintError($"[MjAuto] tile {tile} not found in hand — internal error.");
+                return;
+            }
+
+            var delay = Actions.HumanTiming.RandomDelay();
+            Plugin.ChatGui.Print(
+                $"[MjAuto] auto-discarding {tile} (slot {slot}) in {delay.TotalMilliseconds:F0}ms. {choice.Reasoning}");
+
+            _ = Plugin.Framework.RunOnTick(() =>
+            {
+                var result = plugin.Dispatcher.DispatchDiscard(slot);
+                Plugin.ChatGui.Print($"[MjAuto] dispatch result: {result}");
+            }, delay);
+        });
+    }
+
+    private void HandleTestDiscard(string arg)
+    {
+        if (!int.TryParse(arg.Trim(), out int slot) || slot is < 0 or > 13)
+        {
+            Plugin.ChatGui.PrintError("[MjAuto] Usage: /mjauto testdiscard <0..13>");
+            return;
+        }
+
+        // Must dispatch on the framework thread.
+        Plugin.Framework.RunOnFrameworkThread(() =>
+        {
+            var result = plugin.Dispatcher.DispatchDiscard(slot);
+            Plugin.ChatGui.Print($"[MjAuto] testdiscard slot={slot} result={result}");
+        });
+    }
+
+    private void HandleLog(string arg)
+    {
+        var v = arg.Trim().ToLowerInvariant();
+        switch (v)
+        {
+            case "on":
+                plugin.EventLogger.Enabled = true;
+                plugin.EventLogger.OpenLog();
+                Plugin.ChatGui.Print($"[MjAuto] event logger ON. Writing to {plugin.EventLogger.LogPath}");
+                break;
+            case "off":
+                plugin.EventLogger.Enabled = false;
+                plugin.EventLogger.CloseLog();
+                Plugin.ChatGui.Print("[MjAuto] event logger OFF.");
+                break;
+            case "":
+                Plugin.ChatGui.Print(
+                    $"[MjAuto] event logger is {(plugin.EventLogger.Enabled ? "ON" : "OFF")}. " +
+                    $"Path: {plugin.EventLogger.LogPath}");
+                break;
+            default:
+                Plugin.ChatGui.PrintError("[MjAuto] Usage: /mjauto log <on|off>");
                 break;
         }
     }

@@ -16,6 +16,12 @@
       },
       "DomanMahjongAI.Engine": {
         "type": "Project"
+      },
+      "DomanMahjongAI.Policy": {
+        "type": "Project",
+        "dependencies": {
+          "DomanMahjongAI.Engine": "[1.0.0, )"
+        }
       }
     }
   }
