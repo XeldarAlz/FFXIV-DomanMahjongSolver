@@ -78,12 +78,12 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.PopStyleColor();
         ImGui.Spacing();
         ImGui.TextWrapped(
-            "This plugin automates Doman Mahjong by reading the game window and sending " +
-            "clicks on your behalf. Before enabling automation, please read and accept:");
+            "This plugin can play Doman Mahjong for you by reading the game and clicking " +
+            "on your behalf. Before you turn that on, please read and accept:");
         ImGui.Spacing();
         ImGui.BulletText("Third-party automation is against the FFXIV Terms of Service.");
         ImGui.BulletText("Use at your own risk — your account may be sanctioned.");
-        ImGui.BulletText("Use \"Suggestion only\" mode if you want advice without clicks.");
+        ImGui.BulletText("\"Hints\" mode only shows advice and never clicks for you.");
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
@@ -118,22 +118,22 @@ public sealed class MainWindow : Window, IDisposable
     private (Vector4 dot, string label) GetStatusBadge(Configuration cfg)
     {
         if (!cfg.AutomationArmed) return (ColorDisabled, "Off");
-        if (cfg.SuggestionOnly)    return (ColorSuggest, "Suggestions only");
+        if (cfg.SuggestionOnly)    return (ColorSuggest, "Hints only");
         return (ColorAccent, "Auto-play active");
     }
 
     private void DrawModeSelector(Configuration cfg)
     {
-        // Three-way pill: Off / Suggestions / Auto.
+        // Three-way pill: Off / Hints / Auto.
         var (offColor, suggestColor, autoColor) = (ColorDisabled, ColorSuggest, ColorAccent);
         int current = !cfg.AutomationArmed ? 0 : (cfg.SuggestionOnly ? 1 : 2);
 
         float buttonW = (ImGui.GetContentRegionAvail().X - 16) / 3f;
-        if (PillButton("Off",          current == 0, offColor,     new Vector2(buttonW, 34))) SetMode(cfg, 0);
+        if (PillButton("Off",       current == 0, offColor,     new Vector2(buttonW, 34))) SetMode(cfg, 0);
         ImGui.SameLine();
-        if (PillButton("Suggestions", current == 1, suggestColor, new Vector2(buttonW, 34))) SetMode(cfg, 1);
+        if (PillButton("Hints",     current == 1, suggestColor, new Vector2(buttonW, 34))) SetMode(cfg, 1);
         ImGui.SameLine();
-        if (PillButton("Auto-play",    current == 2, autoColor,    new Vector2(buttonW, 34))) SetMode(cfg, 2);
+        if (PillButton("Auto-play", current == 2, autoColor,    new Vector2(buttonW, 34))) SetMode(cfg, 2);
     }
 
     private static bool PillButton(string label, bool selected, Vector4 tint, Vector2 size)
@@ -163,7 +163,7 @@ public sealed class MainWindow : Window, IDisposable
         if (snap is null)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, ColorMuted);
-            ImGui.TextWrapped("Open a Doman Mahjong table in the Gold Saucer to see suggestions here.");
+            ImGui.TextWrapped("Open a Doman Mahjong table in the Gold Saucer to see hints here.");
             ImGui.PopStyleColor();
             return;
         }
@@ -204,13 +204,13 @@ public sealed class MainWindow : Window, IDisposable
     private void DrawSuggestion(StateSnapshot snap)
     {
         ImGui.PushStyleColor(ImGuiCol.Text, ColorHeader);
-        ImGui.TextUnformatted("Policy");
+        ImGui.TextUnformatted("Best move");
         ImGui.PopStyleColor();
 
         if (snap.Hand.Count != 14)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, ColorMuted);
-            ImGui.TextUnformatted($"  waiting for our turn ({snap.Hand.Count}/14 tiles)");
+            ImGui.TextUnformatted($"  waiting for your turn ({snap.Hand.Count}/14 tiles)");
             ImGui.PopStyleColor();
             return;
         }
@@ -262,11 +262,11 @@ public sealed class MainWindow : Window, IDisposable
     {
         ImGui.Spacing();
 
-        // Policy tier.
-        ImGui.TextUnformatted("Policy");
+        // How strong the plugin tries to play.
+        ImGui.TextUnformatted("Play style");
         int tierIdx = cfg.PolicyTier == "mcts" ? 1 : 0;
-        string[] tiers = { "Efficiency (fast)", "MCTS (stronger, slower)" };
-        ImGui.SetNextItemWidth(240);
+        string[] tiers = { "Standard (fast)", "Stronger (slower to think)" };
+        ImGui.SetNextItemWidth(260);
         if (ImGui.Combo("##policy-tier", ref tierIdx, tiers, tiers.Length))
         {
             plugin.SetPolicy(tierIdx == 0 ? "efficiency" : "mcts");
@@ -274,16 +274,16 @@ public sealed class MainWindow : Window, IDisposable
 
         ImGui.Spacing();
 
-        // Humanized speed.
-        ImGui.TextUnformatted("Humanized delay (median ms)");
+        // Click timing.
+        ImGui.TextUnformatted("Click speed");
         int delay = cfg.HumanizedDelayMs;
-        ImGui.SetNextItemWidth(240);
-        if (ImGui.SliderInt("##delay", ref delay, 400, 3000))
+        ImGui.SetNextItemWidth(260);
+        if (ImGui.SliderInt("##delay", ref delay, 400, 3000, "%d ms"))
         {
             cfg.HumanizedDelayMs = delay;
             cfg.Save();
         }
-        ImGui.TextDisabled("Lower = faster (and more bot-like).");
+        ImGui.TextDisabled("Average time the plugin waits before each click.");
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -296,7 +296,7 @@ public sealed class MainWindow : Window, IDisposable
             cfg.Save();
             if (dev) plugin.DebugOverlay.IsOpen = true;
         }
-        ImGui.TextDisabled("Enables the debug overlay with memory dumps, dispatch tests, event logger.");
+        ImGui.TextDisabled("For debugging. Leave unchecked unless you know what it is.");
 
         if (cfg.DevMode)
         {
@@ -304,7 +304,7 @@ public sealed class MainWindow : Window, IDisposable
             if (ImGui.Button("Open debug overlay"))
                 plugin.DebugOverlay.IsOpen = true;
             ImGui.SameLine();
-            if (ImGui.Button("Reset ToS acknowledgement"))
+            if (ImGui.Button("Show terms notice again"))
             {
                 cfg.TosAccepted = false;
                 cfg.AutomationArmed = false;
@@ -313,6 +313,6 @@ public sealed class MainWindow : Window, IDisposable
         }
 
         ImGui.Spacing();
-        ImGui.TextDisabled("/mjauto open — this window  |  /mjauto debug — debug overlay");
+        ImGui.TextDisabled("Type /mjauto in chat to open this window.");
     }
 }

@@ -1,8 +1,8 @@
 {
   "Author": "XeldarAlz",
   "Name": "Doman Mahjong AI",
-  "Punchline": "Play, suggest, or autopilot Doman Mahjong.",
-  "Description": "Reads your Doman Mahjong table and either suggests the best discard or plays for you. Ships with an efficiency policy (shanten + ukeire + danger) and an optional ISMCTS policy. Suggestion-only by default; full automation is opt-in and gated behind a terms-of-service acknowledgement.",
+  "Punchline": "Doman Mahjong helper — hints or auto-play.",
+  "Description": "A helper for Doman Mahjong at the Gold Saucer. Two modes:\n\n• Hint mode (default): shows the best tile to discard and a short explanation. You still click every move.\n• Auto-play: the plugin watches the table and clicks for you with natural pacing.\n\nStarts off by default. You must accept a short notice before auto-play can be turned on, and you can switch back to hints or turn it off at any time from the plugin window.",
   "ApplicableVersion": "any",
   "RepoUrl": "https://github.com/XeldarAlz/FFXIV-MahjongAI",
   "IconUrl": "https://raw.githubusercontent.com/XeldarAlz/FFXIV-MahjongAI/main/DomanMahjongAI/images/icon.png",
