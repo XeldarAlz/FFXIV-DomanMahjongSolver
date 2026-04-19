@@ -79,7 +79,14 @@ public sealed class HandOverlay : IDisposable
         var rects = TryFindHandTileRects(unit);
         if (rects is null || slot >= rects.Count) return;
 
-        DrawHighlight(rects[slot], isDrawnTile: slot == 13);
+        // Dalamud runs ImGui with multi-viewports enabled: GetForegroundDrawList
+        // accepts desktop-space coordinates, but AtkUnitBase X/Y and node offsets
+        // are game-window-local. Add the main viewport's desktop position so the
+        // highlight tracks the game window when it's not at desktop (0, 0).
+        var viewportOffset = ImGui.GetMainViewport().Pos;
+        var rect = rects[slot];
+        rect.Pos += viewportOffset;
+        DrawHighlight(rect, isDrawnTile: slot == 13);
     }
 
     private static unsafe List<(Vector2 Pos, Vector2 Size)>? TryFindHandTileRects(AtkUnitBase* unit)
