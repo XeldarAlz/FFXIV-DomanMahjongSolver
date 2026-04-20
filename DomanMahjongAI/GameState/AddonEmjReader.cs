@@ -180,10 +180,13 @@ public sealed class AddonEmjReader : IDisposable
             basePtr[0x0ABE],
             basePtr[0x0D9E],
         };
-        // Reject implausible values — each seat discards up to ~24 times in a
-        // 70-wall round; anything way over that means we're reading garbage.
-        if (discardCounts.Any(c => c > 40))
-            discardCounts = new[] { 0, 0, 0, 0 };
+        // Reject implausible values per-seat — each seat discards up to ~24
+        // times in a 70-wall round; anything way over that means we're reading
+        // garbage for *that* seat. Zeroing all four on one bad byte threw away
+        // good data from the other three and collapsed the derived wall count
+        // back to 70.
+        for (int i = 0; i < discardCounts.Length; i++)
+            if (discardCounts[i] > 40) discardCounts[i] = 0;
 
         // State code and wall count from AtkValues. AtkValues[0] holds the state code
         // (30=our turn, 15=call prompt, 5=post-draw idle, etc.). AtkValues[1] holds wall
