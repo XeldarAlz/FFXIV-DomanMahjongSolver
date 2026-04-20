@@ -55,7 +55,7 @@ public sealed record StateSnapshot(
     LegalActions Legal,
     int SchemaVersion)
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public SeatView Us => Seats[OurSeat];
 

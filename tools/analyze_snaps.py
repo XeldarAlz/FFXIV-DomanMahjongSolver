@@ -19,10 +19,25 @@ from pathlib import Path
 REGION_ADDON = "addon"
 REGION_AGENT = "agent"
 
+# Must match the snap command's dump ranges (see WriteSnapFile in
+# DomanMahjongAI/Commands/MjAutoCommand.cs). If the dump grows, grow these too.
+ADDON_SIZE = 0x6000
+AGENT_SIZE = 0x3000
+
 HEX_LINE = re.compile(r"\s*\+0x([0-9A-Fa-f]+):\s+((?:[0-9A-Fa-f]{2}\s+){1,16}[0-9A-Fa-f]{2})")
+# Any line starting with "  -- ... --" opens a new section. Current snap format
+# has five: addon, AgentEmj, Agent-referenced candidate structs header, each
+# candidate[N] @ ..., Emj module @ ... (when non-zero). The parser only cares
+# about addon and AgentEmj; every other section must end addon/agent ingestion.
+SECTION_START = re.compile(r"^  -- (.+?) --\s*$")
 
 def parse_snap(path: Path) -> dict:
-    """Return {'meta': {...}, 'addon': bytes(0x3000), 'agent': bytes(0x2000)}."""
+    """Return {'meta': {...}, 'addon': bytes(ADDON_SIZE), 'agent': bytes(AGENT_SIZE)}.
+
+    Ingests only the addon and AgentEmj sections — walker-emitted candidate and
+    module sections are explicitly skipped so their hex rows don't corrupt the
+    agent buffer (prior bug where candidate dumps bled into agent memory and
+    broke diff/findtile results)."""
     text = path.read_text(encoding="utf-8", errors="replace")
     header = {}
     m = re.search(r"hand=(\S+)", text); header["hand"] = m.group(1) if m else ""
@@ -32,14 +47,22 @@ def parse_snap(path: Path) -> dict:
     m = re.search(r"legal=(\S+)", text); header["legal"] = m.group(1).rstrip(",") if m else ""
     m = re.search(r"label='([^']+)'", text); header["label"] = m.group(1) if m else path.stem
 
-    addon = bytearray(0x3000)
-    agent = bytearray(0x2000)
+    addon = bytearray(ADDON_SIZE)
+    agent = bytearray(AGENT_SIZE)
     region = None
     for line in text.splitlines():
-        if "-- addon @" in line:
-            region = REGION_ADDON; continue
-        if "-- AgentEmj @" in line:
-            region = REGION_AGENT; continue
+        sec = SECTION_START.match(line)
+        if sec:
+            title = sec.group(1)
+            if title.startswith("addon @"):
+                region = REGION_ADDON
+            elif title.startswith("AgentEmj @"):
+                region = REGION_AGENT
+            else:
+                # Candidate / Emj module / any other downstream dump — stop
+                # feeding bytes into the previously active buffer.
+                region = None
+            continue
         if region is None:
             continue
         m = HEX_LINE.match(line)

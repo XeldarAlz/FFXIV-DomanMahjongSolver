@@ -9,6 +9,10 @@ import sys
 from pathlib import Path
 
 HEX_LINE = re.compile(r"\s*\+0x([0-9A-Fa-f]+):\s+((?:[0-9A-Fa-f]{2}\s+){1,16}[0-9A-Fa-f]{2})")
+# Only actual "  -- <name> --" headers open a new section. Required because the
+# ASCII annotation column of a hex row can itself contain '--' when the dumped
+# bytes are 0x2D2D, which would otherwise trigger an early break.
+SECTION_START = re.compile(r"^  -- .+ --\s*$")
 
 TILE_NAMES = (
     ["1m","2m","3m","4m","5m","6m","7m","8m","9m"] +
@@ -20,11 +24,13 @@ def load_region(text: str, region_header: str, size: int) -> bytes:
     buf = bytearray(size)
     in_region = False
     for line in text.splitlines():
-        if region_header in line:
-            in_region = True
+        if SECTION_START.match(line):
+            if region_header in line:
+                in_region = True
+            elif in_region:
+                # Hit the next section — stop consuming hex into this buffer.
+                break
             continue
-        if in_region and "--" in line and region_header not in line:
-            break
         if not in_region:
             continue
         m = HEX_LINE.match(line)
@@ -63,10 +69,16 @@ def scan(buf: bytes, region_name: str, base_offset: int = 0):
         print(f"  +0x{start:04X}..+0x{end:04X} ({len(run)} tiles): {tiles}")
 
 if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print(f"Usage: {Path(sys.argv[0]).name} <snap-file>", file=sys.stderr)
+        raise SystemExit(2)
     path = Path(sys.argv[1])
     text = path.read_text(encoding="utf-8", errors="replace")
-    addon = load_region(text, "-- addon @", 0x3000)
-    agent = load_region(text, "-- AgentEmj @", 0x2000)
+    # Sizes must match the snap command's dump ranges (see WriteSnapFile in
+    # DomanMahjongAI/Commands/MjAutoCommand.cs). Out-of-sync sizes silently
+    # truncate the late part of the dump and hide potential tile patterns.
+    addon = load_region(text, "-- addon @", 0x6000)
+    agent = load_region(text, "-- AgentEmj @", 0x3000)
     print(f"# {path.name}")
     scan(addon, "addon")
     scan(agent, "agent")

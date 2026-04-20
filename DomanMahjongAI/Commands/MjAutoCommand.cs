@@ -371,12 +371,18 @@ public sealed class MjAutoCommand : IDisposable
         long nowMs = Environment.TickCount64;
         if (nowMs - autoSnapLastMs < AutoSnapMinGapMs) return;
 
-        // Fast FNV-1a 64-bit hash over addon + agent + whatever structs the
-        // agent's first 32 pointer slots reference. The latter catches game-state
-        // module mutations without us knowing the module address statically.
+        // FNV-1a 64-bit hash over addon + agent bytes only. Earlier versions
+        // also hashed memory behind agent-slot pointers to catch game-state
+        // changes that don't touch the agent itself — but dereferencing
+        // pointers from agent memory with only a range-and-alignment heuristic
+        // is the same failure mode that got /mjauto scan and followptr removed
+        // (unmapped/stale targets crash the client). Hashing addon+agent is
+        // enough to trigger a capture on any meaningful UI state change, and
+        // the dump-time walker (which fires when the user explicitly runs
+        // /mjauto snap) still inspects pointer targets for RE diagnostics.
         ulong hash = 1469598103934665603UL; // FNV offset basis
         byte* addonPtr = (byte*)obs.Address;
-        for (int i = 0x0500; i < 0x6000; i++)
+        for (int i = 0x0500; i < 0x3000; i++)
             hash = (hash ^ addonPtr[i]) * 1099511628211UL;
         var agentModule = AgentModule.Instance();
         if (agentModule != null)
@@ -387,24 +393,6 @@ public sealed class MjAutoCommand : IDisposable
                 byte* agentPtr = (byte*)agent;
                 for (int i = 0; i < 0x3000; i++)
                     hash = (hash ^ agentPtr[i]) * 1099511628211UL;
-                // Walk up to 32 agent-slot pointers; hash first 0x800 bytes of
-                // each valid-looking target. Catches game-state changes even
-                // when the agent struct itself is stable.
-                nint* slots = (nint*)agent;
-                var seen = new System.Collections.Generic.HashSet<nint>();
-                int hashed = 0;
-                for (int i = 1; i < 32 && hashed < 8; i++)
-                {
-                    nint p = slots[i];
-                    if (p == nint.Zero) continue;
-                    if ((ulong)p < 0x10000UL || (ulong)p > 0x0000_7FFF_FFFF_FFFFUL) continue;
-                    if (((ulong)p & 0xF) != 0) continue;
-                    if (!seen.Add(p)) continue;
-                    byte* pb = (byte*)p;
-                    for (int j = 0; j < 0x800; j++)
-                        hash = (hash ^ pb[j]) * 1099511628211UL;
-                    hashed++;
-                }
             }
         }
         if (hash == autoSnapLastHash) return;
@@ -592,7 +580,7 @@ public sealed class MjAutoCommand : IDisposable
     }
 
     /// <summary>
-    /// Walk the EmjL addon's UldManager.NodeList, dumping every node's index, type,
+    /// Walk the Emj addon's UldManager.NodeList, dumping every node's index, type,
     /// id, visibility, position, and — for AtkImageNodes — the texture id. Mahjong
     /// tiles render as image nodes with texture ids in the Doman tile range
     /// (76041 + tile_id, same encoding as hand AtkValues). Identifying which nodes
