@@ -174,6 +174,18 @@ public sealed class AutoPlayLoop : IDisposable
         {
             try
             {
+                // Re-check state at dispatch time — the modal can close during the
+                // humanized delay (auto-declare elsewhere, manual click, opponent
+                // timeout). Firing opcode 11 after the state machine moved on would
+                // accept option 0 of whatever popup came next, which may not be a
+                // chi variant. Mirrors the re-check in ScheduleDiscard.
+                int currentState = ReadStateCode();
+                if (currentState != 25)
+                {
+                    LastActionDescription =
+                        $"variant aborted: state moved {25}→{currentState}";
+                    return;
+                }
                 var result = plugin.Dispatcher.DispatchCallOption(0);
                 LastActionDescription = $"auto-variant[opt=0] → {result}";
                 Plugin.Log.Info($"[AutoPlayLoop] variant dispatch: {LastActionDescription}");

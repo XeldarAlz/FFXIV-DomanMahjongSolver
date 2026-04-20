@@ -512,6 +512,12 @@ public sealed class AddonEmjReader : IDisposable
         if (unit == null) return false;
         var host = unit->GetNodeById(104);
         if (host == null) return false;
+        // Type-check before casting — component node types are ≥ 1000 (custom
+        // Uld components), native types are single-digit. If a future patch
+        // renumbers id=104 to a non-component node, the cast would dereference
+        // the wrong struct layout. Bail safely when the type isn't what we
+        // captured (observed 1052 in live).
+        if ((int)host->Type < 1000) return false;
         var comp = ((AtkComponentNode*)host)->Component;
         if (comp == null) return false;
         var shell = comp->GetNodeById(3);
