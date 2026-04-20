@@ -2,7 +2,7 @@
   <img src="DomanMahjongAI/images/icon.png" width="120" alt="Doman Mahjong Solver icon">
 </p>
 
-<h1 align="center">Doman Mahjong Solver</h1>
+<h1 align="center">Doman Mahjong Solver (STILL WORK IN PROGRESS, EXPECT BUGS) </h1>
 
 <p align="center">
   A helper for <b>Doman Mahjong</b> at the Gold Saucer.<br>
