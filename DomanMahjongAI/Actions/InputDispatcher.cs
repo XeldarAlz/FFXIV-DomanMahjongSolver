@@ -69,11 +69,104 @@ public sealed class InputDispatcher
         if (!MahjongAddon.TryGet(out var unit, out _)) return DispatchResult.AddonNotFound;
         if (!unit->IsVisible) return DispatchResult.AddonNotVisible;
 
-        var values = stackalloc AtkValue[2];
-        values[0].SetInt(11);
-        values[1].SetInt(option);
-        unit->FireCallback(2, values, true);
+        // Both state-15 classic popups (pon/chi/kan/ron + pass button row) and
+        // state-6/28 list-widget popups (standalone Riichi/Pass) share the same
+        // AtkComponentList shell type (1030), so the shell-type check alone
+        // can't tell them apart. The reliable discriminator is parent AtkValues:
+        // state-15 prompts put the button labels ("Pon", "Chi", "Pass", ...) as
+        // plain Strings at low indices; state-6/28 prompts put only Ints/Bools
+        // there with labels living inside the list items' text nodes.
+        //
+        // Dispatch accordingly:
+        //  - Classic button-row: FireCallback([11, opt]) — what the game's own
+        //    click handler ends up firing for a button press.
+        //  - List widget: route through the AtkComponentList's SelectItem vfunc
+        //    with dispatchEvent: true so the internal CallBackInterface runs
+        //    (mouse-up → ListItemClick → commit). FireCallback alone on a list
+        //    widget only plays the cosmetic declaration animation without
+        //    committing state, which is what broke v0.0.0.16/.17.
+        //
+        // v0.0.0.18 routed everything through SelectItem and broke state-15
+        // (pon/chi/ron) because SelectItem doesn't fire the addon-level opcode-11
+        // callback the button-row handler expects. Distinguishing the two cases
+        // restores state-15 behavior while keeping the state-6/28 fix.
+        if (HasClassicButtonLabels(unit))
+        {
+            var values = stackalloc AtkValue[2];
+            values[0].SetInt(11);
+            values[1].SetInt(option);
+            unit->FireCallback(2, values, true);
+            return DispatchResult.Ok;
+        }
+
+        if (TryDispatchListItemClick(unit, option))
+            return DispatchResult.Ok;
+
+        // Fallback if the shell isn't a list widget either — keep the legacy
+        // FireCallback path so we don't silently drop the dispatch.
+        var fallback = stackalloc AtkValue[2];
+        fallback[0].SetInt(11);
+        fallback[1].SetInt(option);
+        unit->FireCallback(2, fallback, true);
         return DispatchResult.Ok;
+    }
+
+    /// <summary>
+    /// True when parent AtkValues carry a bare button-label string like
+    /// "Pon"/"Chi"/"Kan"/"Ron"/"Riichi"/"Tsumo"/"Pass" in the first ~20 slots —
+    /// the signature of a state-15 classic button-row popup. State-6/28
+    /// list-widget popups carry only Ints/Bools there (labels live inside
+    /// list-item children), so a false from this check routes dispatch to the
+    /// SelectItem path.
+    /// </summary>
+    private static unsafe bool HasClassicButtonLabels(AtkUnitBase* unit)
+    {
+        var atkValues = unit->AtkValues;
+        if (atkValues == null) return false;
+        int scanEnd = Math.Min((int)unit->AtkValuesCount, 20);
+        for (int i = 0; i < scanEnd; i++)
+        {
+            var v = atkValues[i];
+            if (v.Type != FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String &&
+                v.Type != FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String8 &&
+                v.Type != FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString)
+                continue;
+            if (v.String.Value == null) continue;
+            var s = System.Text.Encoding.UTF8.GetString(v.String);
+            switch (s)
+            {
+                case "Pon":
+                case "Chi":
+                case "Kan":
+                case "Ron":
+                case "Riichi":
+                case "Tsumo":
+                case "Pass":
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// If the modal shell is an AtkComponentList, dispatch the click through
+    /// the list's native <c>SelectItem(index, dispatchEvent: true)</c> — same
+    /// code path a mouse-up runs into. Returns true when handled, false when
+    /// the shell isn't a list and the caller should fall back.
+    /// </summary>
+    private static unsafe bool TryDispatchListItemClick(AtkUnitBase* unit, int option)
+    {
+        var host = unit->GetNodeById(104);
+        if (host == null || (int)host->Type < 1000) return false;
+        var hostComp = ((AtkComponentNode*)host)->Component;
+        if (hostComp == null) return false;
+        var shell = hostComp->GetNodeById(3);
+        if (shell == null || (int)shell->Type != 1030) return false;
+        var shellComp = ((AtkComponentNode*)shell)->Component;
+        if (shellComp == null) return false;
+        var list = (FFXIVClientStructs.FFXIV.Component.GUI.AtkComponentList*)shellComp;
+        list->SelectItem(option, dispatchEvent: true);
+        return true;
     }
 
     /// <summary>
