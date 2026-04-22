@@ -61,9 +61,7 @@ public sealed class HandOverlay : IDisposable
         // Auto-play mode doesn't need a visual cue since the plugin clicks for you.
         if (!cfg.AutomationArmed || !cfg.SuggestionOnly) return;
 
-        var ptr = Plugin.GameGui.GetAddonByName(AddonEmjReader.AddonName);
-        if (ptr.Address == nint.Zero) return;
-        var unit = (AtkUnitBase*)ptr.Address;
+        if (!MahjongAddon.TryGet(out var unit, out _)) return;
         if (!unit->IsVisible) return;
 
         var snap = plugin.AddonReader.TryBuildSnapshot();

@@ -18,8 +18,6 @@ namespace DomanMahjongAI.GameState;
 /// </summary>
 public sealed class AddonEmjReader : IDisposable
 {
-    public const string AddonName = "Emj";
-
     private readonly Plugin plugin;
     private bool disposed;
     private int lastLoggedCallPromptState = -1;
@@ -34,10 +32,14 @@ public sealed class AddonEmjReader : IDisposable
     {
         this.plugin = plugin;
 
-        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, AddonName, OnPostSetup);
-        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, AddonName, OnPreFinalize);
-        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostRefresh, AddonName, OnPostRefresh);
-        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostReceiveEvent, AddonName, OnPostReceiveEvent);
+        // Register against every known Mahjong addon name (issue #13): some clients
+        // expose "Emj", others "EmjL". Whichever one exists locally will fire — the
+        // other is a silent no-op. MahjongAddon.TryGet resolves the live pointer.
+        var names = MahjongAddon.CandidateNames;
+        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, names, OnPostSetup);
+        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, names, OnPreFinalize);
+        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostRefresh, names, OnPostRefresh);
+        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostReceiveEvent, names, OnPostReceiveEvent);
     }
 
     public void Dispose()
@@ -90,9 +92,7 @@ public sealed class AddonEmjReader : IDisposable
     /// </summary>
     public unsafe AddonEmjObservation Poll()
     {
-        var ptr = Plugin.GameGui.GetAddonByName(AddonName);
-        nint addr = ptr.Address;
-        if (addr == nint.Zero)
+        if (!MahjongAddon.TryGet(out var unit, out _))
         {
             var missing = AddonEmjObservation.Empty with
             {
@@ -103,7 +103,7 @@ public sealed class AddonEmjReader : IDisposable
             return missing;
         }
 
-        var unit = (AtkUnitBase*)addr;
+        nint addr = (nint)unit;
         var obs = new AddonEmjObservation(
             Present: true,
             IsVisible: unit->IsVisible,
@@ -132,13 +132,10 @@ public sealed class AddonEmjReader : IDisposable
     /// </remarks>
     public unsafe StateSnapshot? TryBuildSnapshot()
     {
-        var ptr = Plugin.GameGui.GetAddonByName(AddonName);
-        nint addr = ptr.Address;
-        if (addr == nint.Zero) return null;
-
-        var unit = (AtkUnitBase*)addr;
+        if (!MahjongAddon.TryGet(out var unit, out _)) return null;
         if (!unit->IsVisible) return null;
 
+        nint addr = (nint)unit;
         byte* basePtr = (byte*)addr;
 
         // Hand tiles at +0x0DB8.

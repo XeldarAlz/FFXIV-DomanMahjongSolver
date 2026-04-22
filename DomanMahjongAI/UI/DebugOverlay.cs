@@ -90,10 +90,8 @@ public sealed class DebugOverlay : Window, IDisposable
 
         // Live AtkValues[0..2] readout.
         string atkLine = "(addon not found)";
-        var ptr = Plugin.GameGui.GetAddonByName(AddonEmjReader.AddonName);
-        if (ptr.Address != nint.Zero)
+        if (MahjongAddon.TryGet(out var unit, out _))
         {
-            var unit = (FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address;
             if (unit->AtkValues != null && unit->AtkValuesCount > 0)
             {
                 var v0 = unit->AtkValues[0];

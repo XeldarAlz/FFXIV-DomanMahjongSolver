@@ -24,8 +24,6 @@ namespace DomanMahjongAI.GameState;
 /// </summary>
 public sealed class InputEventLogger : IDisposable
 {
-    public const string AddonName = AddonEmjReader.AddonName;
-
     // AtkUnitBase::FireCallback — signature from FFXIVClientStructs:
     //   bool FireCallback(uint valueCount, AtkValue* values, bool close)
     // Sig covers the callsite; Dalamud's HookFromSignature follows the E8 to the real function.
@@ -79,7 +77,7 @@ public sealed class InputEventLogger : IDisposable
         logPath = Path.Combine(dir, "emj-events.log");
         capturePath = Path.Combine(dir, "emj-captures.log");
 
-        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostReceiveEvent, AddonName, OnReceiveEvent);
+        Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostReceiveEvent, MahjongAddon.CandidateNames, OnReceiveEvent);
 
         // Install a global FireCallback hook; we filter by addon name inside the detour.
         try
@@ -151,7 +149,7 @@ public sealed class InputEventLogger : IDisposable
         // we'd want the specific variant picked but the game only ever takes option 0
         // from us today (matches what DispatchCall() sends).
         MeldCandidate? acceptedMeld = null;
-        if (addon != null && addon->NameString == AddonName
+        if (addon != null && MahjongAddon.IsMahjongAddon(addon->NameString)
             && valueCount == 2
             && values[0].Type == FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int
             && values[0].Int == 11
@@ -181,7 +179,7 @@ public sealed class InputEventLogger : IDisposable
         string[]? captureAtkValues = null;
         int captureAtkCount = 0;
         if (PendingCaptureLabel is { } pending
-            && addon != null && addon->NameString == AddonName)
+            && addon != null && MahjongAddon.IsMahjongAddon(addon->NameString))
         {
             captureLabel = pending;
             captureFireArgs = SnapshotValues(values, (int)valueCount, max: 32);
@@ -211,7 +209,7 @@ public sealed class InputEventLogger : IDisposable
 
         try
         {
-            if (Enabled && addon != null && addon->NameString == AddonName)
+            if (Enabled && addon != null && MahjongAddon.IsMahjongAddon(addon->NameString))
             {
                 OpenLog();
                 var sb = new StringBuilder();

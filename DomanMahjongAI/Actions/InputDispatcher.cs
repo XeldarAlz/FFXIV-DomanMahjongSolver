@@ -18,8 +18,6 @@ namespace DomanMahjongAI.Actions;
 /// </summary>
 public sealed class InputDispatcher
 {
-    private const string AddonName = AddonEmjReader.AddonName;
-
     public enum DispatchResult
     {
         Ok,
@@ -38,11 +36,7 @@ public sealed class InputDispatcher
     {
         if (slotIndex is < 0 or > 13) return DispatchResult.InvalidSlot;
 
-        var ptr = Plugin.GameGui.GetAddonByName(AddonName);
-        nint addr = ptr.Address;
-        if (addr == nint.Zero) return DispatchResult.AddonNotFound;
-
-        var unit = (AtkUnitBase*)addr;
+        if (!MahjongAddon.TryGet(out var unit, out _)) return DispatchResult.AddonNotFound;
         if (!unit->IsVisible) return DispatchResult.AddonNotVisible;
 
         var values = stackalloc AtkValue[2];
@@ -72,11 +66,7 @@ public sealed class InputDispatcher
     /// </summary>
     public unsafe DispatchResult DispatchCallOption(int option)
     {
-        var ptr = Plugin.GameGui.GetAddonByName(AddonName);
-        nint addr = ptr.Address;
-        if (addr == nint.Zero) return DispatchResult.AddonNotFound;
-
-        var unit = (AtkUnitBase*)addr;
+        if (!MahjongAddon.TryGet(out var unit, out _)) return DispatchResult.AddonNotFound;
         if (!unit->IsVisible) return DispatchResult.AddonNotVisible;
 
         var values = stackalloc AtkValue[2];
@@ -144,11 +134,7 @@ public sealed class InputDispatcher
     {
         if (slotIndex is < 0 or > 13) return DispatchResult.InvalidSlot;
 
-        var ptr = Plugin.GameGui.GetAddonByName(AddonName);
-        nint addr = ptr.Address;
-        if (addr == nint.Zero) return DispatchResult.AddonNotFound;
-
-        var unit = (AtkUnitBase*)addr;
+        if (!MahjongAddon.TryGet(out var unit, out _)) return DispatchResult.AddonNotFound;
         if (!unit->IsVisible) return DispatchResult.AddonNotVisible;
 
         var values = stackalloc AtkValue[2];
@@ -163,11 +149,7 @@ public sealed class InputDispatcher
     /// </summary>
     public unsafe DispatchResult DispatchTsumo()
     {
-        var ptr = Plugin.GameGui.GetAddonByName(AddonName);
-        nint addr = ptr.Address;
-        if (addr == nint.Zero) return DispatchResult.AddonNotFound;
-
-        var unit = (AtkUnitBase*)addr;
+        if (!MahjongAddon.TryGet(out var unit, out _)) return DispatchResult.AddonNotFound;
         if (!unit->IsVisible) return DispatchResult.AddonNotVisible;
 
         var values = stackalloc AtkValue[1];
@@ -184,11 +166,7 @@ public sealed class InputDispatcher
     /// </summary>
     public unsafe DispatchResult DispatchRon()
     {
-        var ptr = Plugin.GameGui.GetAddonByName(AddonName);
-        nint addr = ptr.Address;
-        if (addr == nint.Zero) return DispatchResult.AddonNotFound;
-
-        var unit = (AtkUnitBase*)addr;
+        if (!MahjongAddon.TryGet(out var unit, out _)) return DispatchResult.AddonNotFound;
         if (!unit->IsVisible) return DispatchResult.AddonNotVisible;
 
         var values = stackalloc AtkValue[1];
@@ -204,11 +182,7 @@ public sealed class InputDispatcher
     {
         if (slotIndex is < 0 or > 13) return DispatchResult.InvalidSlot;
 
-        var ptr = Plugin.GameGui.GetAddonByName(AddonName);
-        nint addr = ptr.Address;
-        if (addr == nint.Zero) return DispatchResult.AddonNotFound;
-
-        var unit = (AtkUnitBase*)addr;
+        if (!MahjongAddon.TryGet(out var unit, out _)) return DispatchResult.AddonNotFound;
         if (!unit->IsVisible) return DispatchResult.AddonNotVisible;
 
         var values = stackalloc AtkValue[2];

@@ -412,15 +412,13 @@ public sealed class MjAutoCommand : IDisposable
     /// </summary>
     private unsafe string? WriteSnapFile(string label, bool verbose)
     {
-        var ptr = Plugin.GameGui.GetAddonByName(AddonEmjReader.AddonName);
-        nint addonAddr = ptr.Address;
-        if (addonAddr == nint.Zero)
+        if (!MahjongAddon.TryGet(out var unit, out _))
         {
             if (verbose)
                 Plugin.ChatGui.PrintError("[MjAuto] Emj addon not found — open a table first.");
             return null;
         }
-        var unit = (AtkUnitBase*)addonAddr;
+        nint addonAddr = (nint)unit;
 
         var sb = new System.Text.StringBuilder();
         var now = DateTime.UtcNow;
@@ -591,15 +589,13 @@ public sealed class MjAutoCommand : IDisposable
     {
         Plugin.Framework.RunOnFrameworkThread(() =>
         {
-            var ptr = Plugin.GameGui.GetAddonByName(AddonEmjReader.AddonName);
-            nint addonAddr = ptr.Address;
-            if (addonAddr == nint.Zero)
+            if (!MahjongAddon.TryGet(out var unit, out _))
             {
                 Plugin.ChatGui.PrintError("[MjAuto] Emj addon not found — open a table first.");
                 return;
             }
 
-            var unit = (AtkUnitBase*)addonAddr;
+            nint addonAddr = (nint)unit;
             var mgr = unit->UldManager;
             var sb = new System.Text.StringBuilder();
             var now = DateTime.UtcNow;
@@ -897,14 +893,12 @@ public sealed class MjAutoCommand : IDisposable
 
     private unsafe void DumpAtkValues()
     {
-        var ptr = Plugin.GameGui.GetAddonByName(AddonEmjReader.AddonName);
-        if (ptr.Address == nint.Zero)
+        if (!MahjongAddon.TryGet(out var unit, out _))
         {
             Plugin.ChatGui.PrintError("[MjAuto] Emj addon not found.");
             return;
         }
 
-        var unit = (AtkUnitBase*)ptr.Address;
         var values = unit->AtkValues;
         int count = unit->AtkValuesCount;
         if (values == null || count == 0)
@@ -971,13 +965,12 @@ public sealed class MjAutoCommand : IDisposable
         }
         length = Math.Clamp(length, 1, 0x2000);
 
-        var ptr = Plugin.GameGui.GetAddonByName(AddonEmjReader.AddonName);
-        nint addr = ptr.Address;
-        if (addr == nint.Zero)
+        if (!MahjongAddon.TryGet(out var unit, out _))
         {
             Plugin.ChatGui.PrintError("[MjAuto] Emj addon not found.");
             return;
         }
+        nint addr = (nint)unit;
 
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"# Emj @ 0x{addr:X}  offset=0x{offset:X}  length=0x{length:X}  utc={DateTime.UtcNow:o}");

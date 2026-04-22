@@ -204,10 +204,7 @@ public sealed class AutoPlayLoop : IDisposable
 
     private unsafe int ReadStateCode()
     {
-        var ptr = Plugin.GameGui.GetAddonByName(AddonEmjReader.AddonName);
-        nint addr = ptr.Address;
-        if (addr == nint.Zero) return -1;
-        var unit = (AtkUnitBase*)addr;
+        if (!MahjongAddon.TryGet(out var unit, out _)) return -1;
         if (!unit->IsVisible || unit->AtkValues == null || unit->AtkValuesCount == 0)
             return -1;
         var v = unit->AtkValues[0];
