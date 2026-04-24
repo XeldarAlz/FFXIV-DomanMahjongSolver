@@ -223,10 +223,13 @@ internal static class Theme
         TileSuit.Man or TileSuit.Pin or TileSuit.Sou => t.Number.ToString(),
         TileSuit.Honor => t.HonorNumber switch
         {
-            1 => "E", 2 => "S", 3 => "W", 4 => "N",
-            5 => "白", // 白  haku
-            6 => "發", // 發  hatsu
-            7 => "中", // 中  chun
+            1 => "東", // East
+            2 => "南", // South
+            3 => "西", // West
+            4 => "北", // North
+            5 => "白", // Haku (White Dragon)
+            6 => "發", // Hatsu (Green Dragon)
+            7 => "中", // Chun (Red Dragon)
             _ => "?",
         },
         _ => "?",
