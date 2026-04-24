@@ -277,7 +277,8 @@ public sealed class DebugOverlay : Window, IDisposable
             var obs = plugin.AddonReader.Poll();
             if (!obs.Present)
             {
-                Theme.Subtle("Addon \"Emj\" not found. Open a Doman Mahjong match in-game.");
+                var candidates = string.Join("\" or \"", MahjongAddon.CandidateNames);
+                Theme.Subtle($"Addon \"{candidates}\" not found. Open a Doman Mahjong match in-game.");
                 if (obs.LastLifecycleEvent is not null)
                 {
                     ImGui.Dummy(new Vector2(0, 4));

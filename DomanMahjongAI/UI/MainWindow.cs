@@ -16,7 +16,8 @@ namespace DomanMahjongAI.UI;
 ///   3. Live game  — seat pills, hand rendered as tiles, headline best-move
 ///   4. Settings   — collapsible, grouped into Play style / Appearance / Developer
 /// Debug controls (memory dumps, dispatch tests, event logger) live in the
-/// separate DebugOverlay window, which only opens when DevMode is on.
+/// separate DebugOverlay window — reachable from Settings once DevMode is
+/// enabled, or via /mjauto debug at any time.
 /// </summary>
 public sealed class MainWindow : Window, IDisposable
 {
@@ -202,11 +203,34 @@ public sealed class MainWindow : Window, IDisposable
                 return;
             }
 
+            // Compute policy pick + scored discards once per frame — the MCTS
+            // tier can be expensive, and both the hand-row highlight and the
+            // suggestion panel below need the result. Previously each renderer
+            // called Policy.Choose independently, doubling the work at 60Hz.
+            DiscardScorer.ScoredDiscard[]? scored = null;
+            ActionChoice? choice = null;
+            string? scorerError = null;
+            if (snap.Legal.Can(ActionFlags.Discard))
+            {
+                try
+                {
+                    scored = DiscardScorer.Score(snap);
+                    choice = plugin.Policy.Choose(snap);
+                }
+                catch (Exception ex)
+                {
+                    scorerError = ex.Message;
+                }
+            }
+            int highlightSlot = -1;
+            if (choice?.DiscardTile is { } t)
+                highlightSlot = InputDispatcher.FindSlotOfTile(t, snap.Hand);
+
             DrawSeatRow(snap);
             ImGui.Dummy(new Vector2(0, 10));
-            DrawHandRow(snap);
+            DrawHandRow(snap, highlightSlot);
             ImGui.Dummy(new Vector2(0, 10));
-            DrawSuggestion(snap);
+            DrawSuggestion(snap, scored, choice, scorerError);
         }
     }
 
@@ -247,27 +271,18 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.Dummy(size);
     }
 
-    private void DrawHandRow(StateSnapshot snap)
+    private static void DrawHandRow(StateSnapshot snap, int highlightSlot)
     {
         Theme.Caption($"Hand · {snap.Hand.Count} tiles");
         ImGui.Dummy(new Vector2(0, 3));
-
-        int highlightSlot = -1;
-        if (snap.Legal.Can(ActionFlags.Discard))
-        {
-            try
-            {
-                var choice = plugin.Policy.Choose(snap);
-                if (choice.DiscardTile is { } t)
-                    highlightSlot = InputDispatcher.FindSlotOfTile(t, snap.Hand);
-            }
-            catch { /* best-move lookup is cosmetic — ignore failures */ }
-        }
-
         Theme.DrawHand(snap.Hand, highlightSlot);
     }
 
-    private void DrawSuggestion(StateSnapshot snap)
+    private void DrawSuggestion(
+        StateSnapshot snap,
+        DiscardScorer.ScoredDiscard[]? scored,
+        ActionChoice? choice,
+        string? scorerError)
     {
         var cfg = plugin.Configuration;
 
@@ -280,20 +295,16 @@ public sealed class MainWindow : Window, IDisposable
             return;
         }
 
-        DiscardScorer.ScoredDiscard[] scored;
-        ActionChoice choice;
-        try
-        {
-            scored = DiscardScorer.Score(snap);
-            choice = plugin.Policy.Choose(snap);
-        }
-        catch (Exception ex)
+        if (scorerError != null)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, Theme.Danger);
-            ImGui.TextWrapped($"scorer error: {ex.Message}");
+            ImGui.TextWrapped($"scorer error: {scorerError}");
             ImGui.PopStyleColor();
             return;
         }
+
+        // Invariant from DrawLiveCard: Legal.Discard + no error ⇒ both non-null.
+        if (scored is null || choice is null) return;
 
         string verb = FriendlyActionVerb(choice.Kind);
 
