@@ -28,13 +28,25 @@ public static class DiscardScorer
         double DealInCost)
     {
         public static Weights Default => new(
-            Shanten: 100.0,           // dominates — shanten regressions basically rejected
-            UkeireKinds: 2.0,
-            UkeireWeighted: 1.0,
-            Dora: 4.0,
-            Yakuhai: 2.0,
-            IsolatedTerminal: 0.5,
-            DealInCost: 0.001);       // points × probability → small scaling factor
+            // Tuned in two passes:
+            //   1) EvolutionaryTuner (pop=8, gens=10, hands=50, seed=42) found a coarse set
+            //      that beat the original hand-picked weights at +174.8 pts/hand vs the
+            //      original (seed=7777, 2000 hands).
+            //   2) WeightTuner coordinate descent from that set (iters=72, hands=300,
+            //      seed=4242) refined further. Out-of-sample verification at 2000 hands:
+            //        coord vs ES set:        +227 pts/hand (seed=9999), +77 (seed=31415)
+            //        coord vs hand-picked:   +122 pts/hand (seed=9999)
+            // Shanten=100 dominates so the policy still rejects shanten regressions.
+            // Higher relative weight on Shanten (vs the prior set) means slightly less
+            // aggressive value retention — closer to a "shanten-first, value-second" style.
+            // Re-run with Tenhou replay supervision once a corpus is wired up.
+            Shanten: 100.0,
+            UkeireKinds: 0.1954,
+            UkeireWeighted: 0.5027,
+            Dora: 36.9499,
+            Yakuhai: 19.0784,
+            IsolatedTerminal: 54.5092,
+            DealInCost: 0.019662);
     }
 
     public readonly record struct ScoredDiscard(
@@ -128,17 +140,21 @@ public static class DiscardScorer
 
     private static int CountYakuhai(Hand hand, Tile removed, int roundWindTileId, StateSnapshot state)
     {
-        // Dragons always count. Winds count iff they match round wind or the seat's own wind.
+        // Dragons always count. Winds count iff state.SeatInfoKnown — otherwise
+        // OurSeat/RoundWind are at their 0/0 defaults and we'd be falsely
+        // treating East as "always yakuhai" regardless of who we are or what
+        // round it is. The reader sets SeatInfoKnown only once seat/round are
+        // sourced from the game; until that lands, dragons are the only honors
+        // worth retaining for yakuhai.
         int seatWindTileId = 27 + state.OurSeat;   // seat 0 = E(27), 1 = S(28), 2 = W(29), 3 = N(30)
         int total = 0;
         for (int id = 27; id < Tile.Count34; id++)
         {
             int count = hand.ClosedCounts[id] - (removed.Id == id ? 1 : 0);
             if (count <= 0) continue;
-            bool isYakuhai =
-                id >= 31                        // dragons
-                || id == roundWindTileId        // round wind
-                || id == seatWindTileId;        // seat wind
+            bool isYakuhai = id >= 31;          // dragons (always)
+            if (!isYakuhai && state.SeatInfoKnown)
+                isYakuhai = id == roundWindTileId || id == seatWindTileId;
             if (isYakuhai) total += count;
         }
         return total;

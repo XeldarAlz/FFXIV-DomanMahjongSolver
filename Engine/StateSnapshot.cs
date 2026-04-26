@@ -53,9 +53,15 @@ public sealed record StateSnapshot(
     IReadOnlyList<SeatView> Seats,         // length 4, indexed by seat (self included)
 
     LegalActions Legal,
-    int SchemaVersion)
+    int SchemaVersion,
+    // True when OurSeat (absolute E/S/W/N) and RoundWind are sourced from the
+    // game; false when they're at their defaults (both 0). Yakuhai-on-winds
+    // logic must gate on this — without confirmed seat info, treating any
+    // particular wind as "your seat wind" is ~75% wrong and biases the policy
+    // toward keeping useless wind tiles.
+    bool SeatInfoKnown = false)
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public SeatView Us => Seats[OurSeat];
 

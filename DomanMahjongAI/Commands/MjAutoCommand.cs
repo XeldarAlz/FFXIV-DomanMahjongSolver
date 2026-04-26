@@ -1,4 +1,5 @@
 using Dalamud.Game.Command;
+using DomanMahjongAI.Engine;
 using DomanMahjongAI.GameState;
 using DomanMahjongAI.GameState.Variants;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -116,6 +117,10 @@ public sealed class MjAutoCommand : IDisposable
 
             case "walknodes":
                 HandleWalkNodes();
+                break;
+
+            case "findtiles":
+                HandleFindTiles();
                 break;
 
             case "log":
@@ -865,6 +870,128 @@ public sealed class MjAutoCommand : IDisposable
             sb.Append(b >= 32 && b < 127 ? (char)b : '.');
         }
         sb.AppendLine("|");
+    }
+
+    /// <summary>
+    /// Scan the addon's raw memory for int32 values matching the Doman tile texture
+    /// encoding (<c>76041 + tile_id</c>, range [76041, 76074]). The player's own hand
+    /// stores tiles at <c>addon + 0xDB8</c> as exactly this encoding; if opponents'
+    /// discards are stored similarly anywhere else in addon memory, this finds them
+    /// in a single pass. 100% read-only and bounded to <c>[addon_base, addon_base+0x20000)</c>
+    /// so no pointer-chasing can crash us. The output enumerates every offset whose
+    /// 4 bytes decode to a valid tile-texture id, plus the resolved tile id (e.g.
+    /// "0xDB8: tex=76055 tile=14 (5p)").
+    /// </summary>
+    private unsafe void HandleFindTiles()
+    {
+        Plugin.Framework.RunOnFrameworkThread(() =>
+        {
+            if (!MahjongAddon.TryGet(out var unit, out _))
+            {
+                Plugin.ChatGui.PrintError("[MjAuto] Emj addon not found — open a table first.");
+                return;
+            }
+
+            // The hand reader uses 76041 on Emj (EU); EmjL uses 76003. Try both
+            // ranges so this works on either client without needing the variant.
+            int[] candidateBases = { 76041, 76003 };
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"# findtiles  utc={DateTime.UtcNow:o}");
+            sb.AppendLine();
+            int totalMatches = 0;
+
+            // Region 1: the addon itself. Hand lives at +0xDB8 here; if discards
+            // were also addon-stored we'd find them in the same 0x4000 window.
+            totalMatches += ScanRegion(sb, "addon", (byte*)unit, 0x4000, candidateBases);
+
+            // Region 2: AgentEmj. Other diagnostics already dump 0..0x3000 of this
+            // safely (HandleSnap, MaybeLogMeldTransition).
+            var agentModule = AgentModule.Instance();
+            if (agentModule != null)
+            {
+                var agent = agentModule->GetAgentByInternalId((AgentId)5);
+                if (agent != null)
+                    totalMatches += ScanRegion(sb, "AgentEmj", (byte*)agent, 0x3000, candidateBases);
+                else
+                    sb.AppendLine("  (AgentEmj unavailable — GetAgentByInternalId returned null)");
+            }
+            else
+            {
+                sb.AppendLine("  (AgentModule unavailable)");
+            }
+
+            // Region 3: every plausible heap pointer reachable from AgentEmj's
+            // first 32 slots. The static module slot at module_base + 0x29E1400
+            // is stale post-patch (per HandleSnap/DumpEmjModule comments), but the
+            // game-state struct that holds discards still gets referenced from
+            // somewhere off the agent. Scan each candidate's first 0x2000 bytes.
+            if (agentModule != null)
+            {
+                var agent = agentModule->GetAgentByInternalId((AgentId)5);
+                if (agent != null)
+                {
+                    nint* slots = (nint*)agent;
+                    var seen = new System.Collections.Generic.HashSet<nint>();
+                    int candidateCount = 0;
+                    for (int i = 1; i < 32 && candidateCount < 12; i++)
+                    {
+                        nint p = slots[i];
+                        if (p == nint.Zero) continue;
+                        if ((ulong)p < 0x10000UL || (ulong)p > 0x0000_7FFF_FFFF_FFFFUL) continue;
+                        if (((ulong)p & 0xF) != 0) continue;
+                        if (!seen.Add(p)) continue;
+                        // Probe before scanning: if first 16 bytes are all zero,
+                        // it's almost certainly an empty/stale slot.
+                        bool nonZero = false;
+                        byte* pb = (byte*)p;
+                        for (int j = 0; j < 16 && !nonZero; j++)
+                            if (pb[j] != 0) nonZero = true;
+                        if (!nonZero) continue;
+                        totalMatches += ScanRegion(
+                            sb, $"agent+0x{i * 8:X2} -> 0x{p:X}", pb, 0x2000, candidateBases);
+                        candidateCount++;
+                    }
+                }
+            }
+
+            var dir = Plugin.PluginInterface.GetPluginConfigDirectory();
+            System.IO.Directory.CreateDirectory(dir);
+            var path = System.IO.Path.Combine(dir, "emj-findtiles.txt");
+            System.IO.File.WriteAllText(path, sb.ToString());
+            Plugin.ChatGui.Print($"[MjAuto] findtiles → {path}  ({totalMatches} matches)");
+        });
+    }
+
+    /// <summary>
+    /// Scan a memory region for any int32 that decodes to a Doman tile texture id
+    /// under one of <paramref name="texBases"/>. Read-only, safely bounded — no
+    /// pointer-chasing, no struct dereferences.
+    /// </summary>
+    private static unsafe int ScanRegion(
+        System.Text.StringBuilder sb, string label, byte* basePtr, int length, int[] texBases)
+    {
+        sb.AppendLine($"## {label}  base=0x{(nint)basePtr:X}  length=0x{length:X}");
+        int matches = 0;
+        foreach (var texBase in texBases)
+        {
+            int forBase = 0;
+            for (int off = 0; off + 4 <= length; off += 4)
+            {
+                int tex = *(int*)(basePtr + off);
+                int tileId = tex - texBase;
+                if (tileId < 0 || tileId >= Tile.Count34) continue;
+                forBase++;
+                var tile = Tile.FromId(tileId);
+                sb.AppendLine($"  base={texBase}  +0x{off:X4}: tex={tex} tile={tileId} ({tile})");
+            }
+            if (forBase > 0)
+                sb.AppendLine($"  -- {forBase} matches for base {texBase}");
+            matches += forBase;
+        }
+        if (matches == 0) sb.AppendLine("  (no tile-encoded ints found in this region)");
+        sb.AppendLine();
+        return matches;
     }
 
     /// <summary>

@@ -140,12 +140,14 @@ public static class CallEvaluator
     {
         if (t.IsDragon) return true;
         if (!t.IsWind) return false;
+        if (!state.SeatInfoKnown) return false;   // see DiscardScorer.CountYakuhai
         int seatWindId = 27 + state.OurSeat;
         return t.Id == seatWindId || t.Id == 27 + state.RoundWind;
     }
 
     private static bool IsYakuhaiWind(int id, StateSnapshot state)
     {
+        if (!state.SeatInfoKnown) return false;
         int seatWindId = 27 + state.OurSeat;
         return id == seatWindId || id == 27 + state.RoundWind;
     }

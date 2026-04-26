@@ -135,6 +135,21 @@ internal abstract class BaseEmjVariant : IEmjVariant
         bool plausibleScores = scores.All(s => s is >= 0 and <= 200000);
         if (!plausibleScores) return null;
 
+        // Dora indicator at +0x0FD8. Single int32 with the same texture-id
+        // encoding as the hand (textureBase + tile_id). Pinned via /mjauto findtiles
+        // — it's the only int32 outside the hand region whose value decodes to a
+        // valid tile id, and the value changes round-to-round (not per-discard),
+        // matching the dora indicator's lifecycle. Doman Mahjong only ever shows a
+        // single indicator (no kan-dora extension visible to the player), so this is
+        // a one-tile array.
+        var doraIndicators = new List<Tile>(1);
+        {
+            int rawDora = *(int*)(basePtr + 0x0FD8);
+            int doraTileId = rawDora - TileTextureBase;
+            if (doraTileId >= 0 && doraTileId < Tile.Count34)
+                doraIndicators.Add(Tile.FromId(doraTileId));
+        }
+
         // Per-seat discard count bytes. Sit 2 bytes before each score field —
         // the position was pinned by diffing consecutive observations across a
         // full round and confirmed via walknodes (4 pools of 31 UldComponent
@@ -217,6 +232,7 @@ internal abstract class BaseEmjVariant : IEmjVariant
             Scores = scores,
             Seats = seats,
             WallRemaining = wallRemaining,
+            DoraIndicators = doraIndicators,
             Legal = legal,
         };
     }
