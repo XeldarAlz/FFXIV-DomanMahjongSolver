@@ -202,13 +202,30 @@ internal abstract class BaseEmjVariant : IEmjVariant
             if (derived is >= 0 and <= 70) wallRemaining = derived;
         }
 
-        // Assemble the snapshot. Seat-relative: self is always index 0 here.
-        // RoundWind / OurSeat (in the absolute E/S/W/N sense) aren't reliably recoverable
-        // yet — leave them at the defaults; downstream scorers will treat the player as
-        // East for yakuhai purposes (minor inaccuracy, fixable when M4 sig-scan lands).
+        // Per-seat opponent discard tiles aren't reachable via static byte offsets
+        // in the addon's discard-pool components. Multiple /mjauto poolslots
+        // captures showed:
+        //   - The tile_id field (or what looked like one) appeared at different
+        //     offsets across games and sometimes within a single game.
+        //   - "Clean" candidate offsets often turned out to hold sequential
+        //     counters (e.g. +0x0A9 showing 5p,6p,7p,8p,4p — too ordered to
+        //     be real discards) rather than tile_ids.
+        //   - All visible slots share the same PartsList*, AtkTextureResource,
+        //     u/v coords — so the tile-binding mechanism isn't in the standard
+        //     ATK image-node path.
+        // The actual tile rendering likely happens via a hook or a pointer
+        // chain we haven't followed. Discard reading is parked here pending
+        // either a render-function hook or a sigscan to a global game state.
         var seats = new SeatView[4];
         for (int i = 0; i < 4; i++)
-            seats[i] = new SeatView([], [], [], false, -1, false, false,
+            seats[i] = new SeatView(
+                Discards: [],
+                DiscardIsTedashi: [],
+                Melds: [],
+                Riichi: false,
+                RiichiDiscardIndex: -1,
+                Ippatsu: false,
+                IsTenpaiCalled: false,
                 DiscardCount: discardCounts[i]);
 
         var legal = BuildLegalActions(unit, stateCode, hand, atkValues, atkCount);
@@ -235,6 +252,49 @@ internal abstract class BaseEmjVariant : IEmjVariant
             DoraIndicators = doraIndicators,
             Legal = legal,
         };
+    }
+
+    /// <summary>
+    /// Read the discard tile sequence for a given pool component type by walking
+    /// the addon's NodeList for visible slot components and decoding each slot's
+    /// tile_id from a known offset within its component memory.
+    ///
+    /// Returns discards in chronological order (oldest first). Doman addon
+    /// numbers slot components <c>parent_id</c> for the first slot, then
+    /// <c>parent_id*10000 + 1, +2, ...</c> for subsequent slots — so id ascending
+    /// = chronological order. Slots with tile_id outside [0, 34) are skipped
+    /// (treated as still-empty / uninitialized memory for that slot).
+    /// </summary>
+    private static unsafe IReadOnlyList<Tile> ReadDiscardsForType(
+        AtkUnitBase* unit, int poolType, int tileIdOffset)
+    {
+        var mgr = unit->UldManager;
+        if (mgr.NodeList == null) return [];
+
+        // Collect (NodeId, tile_id) for every visible slot of this pool type.
+        var collected = new List<(uint Id, byte TileByte)>();
+        for (int i = 0; i < mgr.NodeListCount; i++)
+        {
+            var n = mgr.NodeList[i];
+            if (n == null) continue;
+            if ((int)n->Type != poolType) continue;
+            if (!n->NodeFlags.HasFlag(NodeFlags.Visible)) continue;
+            var compNode = (AtkComponentNode*)n;
+            if (compNode->Component == null) continue;
+            byte tileByte = ((byte*)compNode->Component)[tileIdOffset];
+            collected.Add((n->NodeId, tileByte));
+        }
+
+        // Sort by NodeId ascending = chronological discard order.
+        collected.Sort((a, b) => a.Id.CompareTo(b.Id));
+
+        var result = new List<Tile>(collected.Count);
+        foreach (var (_, b) in collected)
+        {
+            if (b < Tile.Count34)
+                result.Add(Tile.FromId(b));
+        }
+        return result;
     }
 
     /// <summary>

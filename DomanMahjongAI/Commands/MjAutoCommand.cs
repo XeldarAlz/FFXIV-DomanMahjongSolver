@@ -123,6 +123,18 @@ public sealed class MjAutoCommand : IDisposable
                 HandleFindTiles();
                 break;
 
+            case "hexdump":
+                HandleHexDump(rest);
+                break;
+
+            case "poolslots":
+                HandlePoolSlots();
+                break;
+
+            case "poolicons":
+                HandlePoolIcons();
+                break;
+
             case "log":
                 HandleLog(rest);
                 break;
@@ -882,6 +894,418 @@ public sealed class MjAutoCommand : IDisposable
     /// 4 bytes decode to a valid tile-texture id, plus the resolved tile id (e.g.
     /// "0xDB8: tex=76055 tile=14 (5p)").
     /// </summary>
+    /// <summary>
+    /// Read the texture icon-id for every visible discard pool component's tile-face
+    /// image node, with strict pointer validation at every step. The earlier
+    /// IconId-read crash came from walking <i>every</i> image node in the addon,
+    /// some of which had stale texture-resource pointers; restricting to just the
+    /// 4 known pool types (1021..1024) and validating each dereference target is
+    /// in plausible heap range avoids the AV.
+    ///
+    /// Doman tile face icons are <c>76041 + tile_id</c>. If iconId reads correctly,
+    /// the displayed tile is recoverable directly.
+    /// </summary>
+    private unsafe void HandlePoolIcons()
+    {
+        Plugin.Framework.RunOnFrameworkThread(() =>
+        {
+            if (!MahjongAddon.TryGet(out var unit, out _))
+            {
+                Plugin.ChatGui.PrintError("[MjAuto] Emj addon not found — open a table first.");
+                return;
+            }
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"# poolicons  addon=0x{(nint)unit:X}  utc={DateTime.UtcNow:o}");
+
+            var mgr = unit->UldManager;
+            if (mgr.NodeList == null) { sb.AppendLine("  no NodeList"); return; }
+
+            // Group visible 1021..1024 components by type. Pointers are stored as
+            // nint (addresses) since pointer types can't be generic type arguments.
+            var slotsByType = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<(uint Id, nint CompNodeAddr)>>();
+            for (int i = 0; i < mgr.NodeListCount; i++)
+            {
+                var n = mgr.NodeList[i];
+                if (n == null) continue;
+                int t = (int)n->Type;
+                if (t < 1021 || t > 1024) continue;
+                if (!n->NodeFlags.HasFlag(NodeFlags.Visible)) continue;
+                var compNode = (AtkComponentNode*)n;
+                if (compNode->Component == null) continue;
+                if (!slotsByType.TryGetValue(t, out var list))
+                    slotsByType[t] = list = new();
+                list.Add((n->NodeId, (nint)compNode));
+            }
+
+            int totalDecoded = 0;
+            foreach (var kvp in slotsByType.OrderBy(k => k.Key))
+            {
+                int type = kvp.Key;
+                var slots = kvp.Value;
+                sb.AppendLine();
+                sb.AppendLine($"## type={type}  visible={slots.Count}");
+
+                foreach (var entry in slots)
+                {
+                    var compNode = (AtkComponentNode*)entry.CompNodeAddr;
+                    var line = $"  slot id={entry.Id}  comp=0x{(nint)compNode->Component:X}  ";
+                    var decoded = TryReadSlotIcon(compNode, out var info);
+                    sb.AppendLine(line + info);
+                    if (decoded) totalDecoded++;
+                }
+            }
+
+            var dir = Plugin.PluginInterface.GetPluginConfigDirectory();
+            System.IO.Directory.CreateDirectory(dir);
+            var path = System.IO.Path.Combine(dir, "emj-poolicons.txt");
+            System.IO.File.WriteAllText(path, sb.ToString());
+            Plugin.ChatGui.Print($"[MjAuto] poolicons → {path}  ({totalDecoded} decoded)");
+        });
+    }
+
+    /// <summary>
+    /// Find the tile-face image node (id=5) inside a discard-pool component, walk
+    /// to its texture resource icon-id, and return a one-line description. Every
+    /// pointer dereference is gated on a heap-range check; on any anomaly returns
+    /// false with a diagnostic string instead of raising.
+    /// </summary>
+    private static unsafe bool TryReadSlotIcon(AtkComponentNode* compNode, out string info)
+    {
+        info = "?";
+        var comp = compNode->Component;
+        if (comp == null) { info = "no component"; return false; }
+        var inner = comp->UldManager;
+        if (inner.NodeList == null) { info = "no inner NodeList"; return false; }
+
+        // The visible tile face is the Image node with id=5 (per walknodes
+        // captures). Other ids are chrome (id=4 glow, id=2/3 Res containers).
+        AtkImageNode* imgNode = null;
+        for (int i = 0; i < inner.NodeListCount; i++)
+        {
+            var n = inner.NodeList[i];
+            if (n == null) continue;
+            if (n->NodeId != 5) continue;
+            if (n->Type != NodeType.Image) continue;
+            imgNode = (AtkImageNode*)n;
+            break;
+        }
+        if (imgNode == null) { info = "no image node id=5"; return false; }
+
+        var pl = imgNode->PartsList;
+        if (!IsHeapPointer((nint)pl)) { info = $"bad partsList=0x{(nint)pl:X}"; return false; }
+
+        // Capture per-slot identity signal up front: image-node bytes (where any
+        // per-instance state lives) and partsList pointer address (which varies if
+        // each slot has its own list pointing at distinct texture sub-regions).
+        byte* nb = (byte*)imgNode;
+        var imgHex = new System.Text.StringBuilder();
+        for (int b = 0; b < 0x40; b++)
+        {
+            imgHex.Append($"{nb[b]:X2}");
+            if ((b & 7) == 7) imgHex.Append(' ');
+        }
+        string imgInfo = $"imgNode=0x{(nint)imgNode:X}  pl=0x{(nint)pl:X}  partId={imgNode->PartId}  [{imgHex}]";
+
+        if (pl->Parts == null || imgNode->PartId >= pl->PartCount)
+        {
+            info = $"{imgInfo}  parts={(nint)pl->Parts:X} count={pl->PartCount}";
+            return false;
+        }
+        var part = &pl->Parts[imgNode->PartId];
+        // Capture the part's u/v + size + asset pointer — these are the three
+        // candidate per-tile signals at this layer.
+        string partInfo = $"part_uv=({part->U},{part->V}) part_wh=({part->Width},{part->Height}) asset=0x{(nint)part->UldAsset:X}";
+
+        var asset = part->UldAsset;
+        if (!IsHeapPointer((nint)asset)) { info = $"{imgInfo}  {partInfo}  bad uldAsset"; return false; }
+
+        var atkTex = asset->AtkTexture;
+        var res = atkTex.Resource;
+        if (!IsHeapPointer((nint)res)) { info = $"{imgInfo}  {partInfo}  bad texResource=0x{(nint)res:X}"; return false; }
+
+        try
+        {
+            uint iconId = res->IconId;
+            int tileId = (int)iconId - 76041;
+            if (tileId >= 0 && tileId < Tile.Count34)
+            {
+                info = $"{imgInfo}  {partInfo}  iconId={iconId} → tile={tileId} ({Tile.FromId(tileId)})";
+                return true;
+            }
+            info = $"{imgInfo}  {partInfo}  res=0x{(nint)res:X} iconId=-1";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            info = $"{imgInfo}  {partInfo}  read failed: {ex.GetType().Name}";
+            return false;
+        }
+    }
+
+    /// <summary>Plausible-heap-pointer check matching the conservative range used
+    /// elsewhere in this file (see HandleSnap).</summary>
+    private static bool IsHeapPointer(nint p) =>
+        p != nint.Zero
+        && (ulong)p >= 0x10000UL
+        && (ulong)p <= 0x0000_7FFF_FFFF_FFFFUL
+        && ((ulong)p & 0x7) == 0;
+
+    /// <summary>
+    /// Dump the first 0x100 bytes of every visible discard-pool component (types
+    /// 1021..1024, 31 slots each), then highlight bytes that <b>differ</b> across
+    /// slots of the same type. The tile-id binding has to be a byte that varies
+    /// per slot in a way correlated with the displayed tile — comparing all
+    /// visible slots side-by-side surfaces those bytes automatically.
+    /// </summary>
+    private unsafe void HandlePoolSlots()
+    {
+        Plugin.Framework.RunOnFrameworkThread(() =>
+        {
+            if (!MahjongAddon.TryGet(out var unit, out _))
+            {
+                Plugin.ChatGui.PrintError("[MjAuto] Emj addon not found — open a table first.");
+                return;
+            }
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"# poolslots  addon=0x{(nint)unit:X}  utc={DateTime.UtcNow:o}");
+
+            var mgr = unit->UldManager;
+            if (mgr.NodeList == null) { sb.AppendLine("  no NodeList"); return; }
+
+            // Collect visible 1021..1024 components grouped by type.
+            var slotsByType = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<(uint Id, nint Comp, float X, float Y)>>();
+            for (int i = 0; i < mgr.NodeListCount; i++)
+            {
+                var n = mgr.NodeList[i];
+                if (n == null) continue;
+                int t = (int)n->Type;
+                if (t < 1021 || t > 1024) continue;
+                if (!n->NodeFlags.HasFlag(NodeFlags.Visible)) continue;
+                var compNode = (AtkComponentNode*)n;
+                if (compNode->Component == null) continue;
+                if (!slotsByType.TryGetValue(t, out var list))
+                    slotsByType[t] = list = new();
+                list.Add((n->NodeId, (nint)compNode->Component, n->X, n->Y));
+            }
+
+            // Dump enough to reach past the AtkComponentBase header (~0xE0 bytes)
+            // into custom Doman discard slot state. Earlier 0x100 was too shallow:
+            // image-node id=5 is shared chrome (same PartsList & texture across all
+            // slots), so the actual tile-id binding must live in the component's
+            // own custom state. 0x800 covers a wide window of custom fields. If
+            // the tile_id field for types 1021/1022/1024 isn't in this range,
+            // it's likely behind a pointer-deref'd struct, not in the comp itself.
+            const int dumpLen = 0x800;
+            foreach (var kvp in slotsByType.OrderBy(k => k.Key))
+            {
+                int type = kvp.Key;
+                var slots = kvp.Value;
+                sb.AppendLine();
+                sb.AppendLine($"## type={type}  visible-slot-count={slots.Count}");
+
+                if (slots.Count == 0) continue;
+
+                // Read the bytes for each slot.
+                var slotBytes = new byte[slots.Count][];
+                for (int s = 0; s < slots.Count; s++)
+                {
+                    var arr = new byte[dumpLen];
+                    byte* cb = (byte*)slots[s].Comp;
+                    for (int j = 0; j < dumpLen; j++) arr[j] = cb[j];
+                    slotBytes[s] = arr;
+                }
+
+                // List the slots up front (id, address, position).
+                for (int s = 0; s < slots.Count; s++)
+                    sb.AppendLine($"  slot[{s}]  id={slots[s].Id}  comp=0x{slots[s].Comp:X}  xy=({slots[s].X:F0},{slots[s].Y:F0})");
+
+                // Pass 0: offsets where ALL slots have byte & 0x3F in tile-range
+                // AND those low-6-bit values are all distinct. This catches the
+                // case where the byte is `flags << 6 | tile_id` (bits 6-7 are
+                // flag/orientation marker, bits 0-5 are tile_id). Type 1022 had
+                // exactly this pattern at +0x021 in earlier dumps (high bit
+                // always set, low 6 bits = valid tile_id sequence).
+                sb.AppendLine();
+                sb.AppendLine("  -- MASKED-6BIT candidates: (byte & 0x3F) all-tile-range AND all-distinct --");
+                int maskedCount = 0;
+                for (int off = 0; off < dumpLen; off++)
+                {
+                    bool allInRange = true;
+                    var maskedSeen = new System.Collections.Generic.HashSet<byte>();
+                    for (int s = 0; s < slotBytes.Length; s++)
+                    {
+                        byte b = (byte)(slotBytes[s][off] & 0x3F);
+                        if (b >= Tile.Count34) { allInRange = false; break; }
+                        maskedSeen.Add(b);
+                    }
+                    if (!allInRange || maskedSeen.Count != slotBytes.Length) continue;
+                    maskedCount++;
+                    var values = new System.Collections.Generic.List<string>();
+                    for (int s = 0; s < slotBytes.Length; s++)
+                    {
+                        byte raw = slotBytes[s][off];
+                        byte masked = (byte)(raw & 0x3F);
+                        values.Add($"[{s}]raw=0x{raw:X2}→{masked}({Tile.FromId(masked)})");
+                    }
+                    sb.AppendLine($"    +0x{off:X3}: {string.Join(" ", values)}");
+                }
+                sb.AppendLine($"  -- {maskedCount} masked-6bit candidates --");
+
+                // Pass 1: offsets where ALL slots are in tile-id range [0..33]
+                // AND have distinct values. This is the strongest possible signal —
+                // every visible slot showing a different tile would have its
+                // tile-id stored at an offset that satisfies both conditions.
+                sb.AppendLine();
+                sb.AppendLine("  -- STRONG candidates: all-tile-range AND all-distinct --");
+                int strongCount = 0;
+                for (int off = 0; off < dumpLen; off++)
+                {
+                    bool allInRange = true;
+                    var seen = new System.Collections.Generic.HashSet<byte>();
+                    for (int s = 0; s < slotBytes.Length; s++)
+                    {
+                        byte b = slotBytes[s][off];
+                        if (b >= Tile.Count34) { allInRange = false; break; }
+                        seen.Add(b);
+                    }
+                    if (!allInRange || seen.Count != slotBytes.Length) continue;
+                    strongCount++;
+                    var values = new System.Collections.Generic.List<string>();
+                    for (int s = 0; s < slotBytes.Length; s++)
+                    {
+                        byte b = slotBytes[s][off];
+                        values.Add($"[{s}]={b}({Tile.FromId(b)})");
+                    }
+                    sb.AppendLine($"    +0x{off:X3}: {string.Join(" ", values)}");
+                }
+                sb.AppendLine($"  -- {strongCount} strong candidates --");
+
+                // Pass 2: weaker — at least N-1 distinct in-range values (allows
+                // for repeated tiles like dora-bait discards or duplicate honors).
+                sb.AppendLine();
+                sb.AppendLine("  -- MEDIUM candidates: all-tile-range, ≥N-1 distinct --");
+                int mediumCount = 0;
+                for (int off = 0; off < dumpLen; off++)
+                {
+                    bool allInRange = true;
+                    var seen = new System.Collections.Generic.HashSet<byte>();
+                    for (int s = 0; s < slotBytes.Length; s++)
+                    {
+                        byte b = slotBytes[s][off];
+                        if (b >= Tile.Count34) { allInRange = false; break; }
+                        seen.Add(b);
+                    }
+                    if (!allInRange || seen.Count == slotBytes.Length) continue;  // captured above
+                    if (seen.Count < slotBytes.Length - 1) continue;
+                    mediumCount++;
+                    var values = new System.Collections.Generic.List<string>();
+                    for (int s = 0; s < slotBytes.Length; s++)
+                    {
+                        byte b = slotBytes[s][off];
+                        values.Add($"[{s}]={b}({Tile.FromId(b)})");
+                    }
+                    sb.AppendLine($"    +0x{off:X3}: {string.Join(" ", values)}");
+                }
+                sb.AppendLine($"  -- {mediumCount} medium candidates --");
+
+                // Pass 3 (full): all offsets that differ, for completeness.
+                sb.AppendLine();
+                sb.AppendLine("  -- ALL differing offsets (raw, includes pointer noise) --");
+                int diffCount = 0;
+                for (int off = 0; off < dumpLen; off++)
+                {
+                    byte first = slotBytes[0][off];
+                    bool varies = false;
+                    for (int s = 1; s < slotBytes.Length; s++)
+                        if (slotBytes[s][off] != first) { varies = true; break; }
+                    if (!varies) continue;
+                    diffCount++;
+                    var values = new System.Collections.Generic.List<string>();
+                    for (int s = 0; s < slotBytes.Length; s++)
+                    {
+                        byte b = slotBytes[s][off];
+                        string tile = b < Tile.Count34 ? $"={b}({Tile.FromId(b)})" : $"=0x{b:X2}";
+                        values.Add($"[{s}]{tile}");
+                    }
+                    sb.AppendLine($"    +0x{off:X3}: {string.Join(" ", values)}");
+                }
+                sb.AppendLine($"  -- {diffCount} differing offsets total --");
+            }
+
+            var dir = Plugin.PluginInterface.GetPluginConfigDirectory();
+            System.IO.Directory.CreateDirectory(dir);
+            var path = System.IO.Path.Combine(dir, "emj-poolslots.txt");
+            System.IO.File.WriteAllText(path, sb.ToString());
+            Plugin.ChatGui.Print($"[MjAuto] poolslots → {path}  ({slotsByType.Sum(kvp => kvp.Value.Count)} visible slots)");
+        });
+    }
+
+    /// <summary>
+    /// Hexdump a range of addon or agent memory. Usage:
+    ///   <c>/mjauto hexdump</c>                — addon +0x0C00..+0x1400 (default)
+    ///   <c>/mjauto hexdump 0x100 0x800</c>    — addon +0x100..+0x800
+    ///   <c>/mjauto hexdump agent</c>          — AgentEmj +0x100..+0x900 (per-seat region)
+    ///   <c>/mjauto hexdump agent 0 0x3000</c> — full AgentEmj
+    /// </summary>
+    private unsafe void HandleHexDump(string args)
+    {
+        Plugin.Framework.RunOnFrameworkThread(() =>
+        {
+            var parts = args.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            // First arg can be the literal "agent" to switch source.
+            bool agentMode = parts.Length > 0 && parts[0].Equals("agent", StringComparison.OrdinalIgnoreCase);
+            int rangeArgStart = agentMode ? 1 : 0;
+
+            byte* basePtr;
+            string label;
+            int regionMax;
+            if (agentMode)
+            {
+                var agentModule = AgentModule.Instance();
+                if (agentModule == null) { Plugin.ChatGui.PrintError("[MjAuto] AgentModule unavailable."); return; }
+                var agent = agentModule->GetAgentByInternalId((AgentId)5);
+                if (agent == null) { Plugin.ChatGui.PrintError("[MjAuto] AgentEmj unavailable."); return; }
+                basePtr = (byte*)agent;
+                label = $"AgentEmj=0x{(nint)agent:X}";
+                regionMax = 0x3000;
+            }
+            else
+            {
+                if (!MahjongAddon.TryGet(out var unit, out _))
+                {
+                    Plugin.ChatGui.PrintError("[MjAuto] Emj addon not found — open a table first.");
+                    return;
+                }
+                basePtr = (byte*)unit;
+                label = $"addon=0x{(nint)unit:X}";
+                regionMax = 0x4000;
+            }
+
+            int defaultStart = agentMode ? 0x0100 : 0x0C00;
+            int defaultEnd = agentMode ? 0x0900 : 0x1400;
+            int start = defaultStart, end = defaultEnd;
+            if (parts.Length > rangeArgStart && TryParseHex(parts[rangeArgStart], out var s)) start = s;
+            if (parts.Length > rangeArgStart + 1 && TryParseHex(parts[rangeArgStart + 1], out var e)) end = e;
+            start = Math.Clamp(start, 0, regionMax);
+            end = Math.Clamp(end, start + 16, regionMax);
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"# hexdump  {label}  range=+0x{start:X4}..+0x{end:X4}  utc={DateTime.UtcNow:o}");
+            for (int off = start; off < end; off += 16)
+                AppendHexRow(sb, basePtr, off, 16);
+
+            var dir = Plugin.PluginInterface.GetPluginConfigDirectory();
+            System.IO.Directory.CreateDirectory(dir);
+            var fname = agentMode ? "emj-hexdump-agent.txt" : "emj-hexdump.txt";
+            var path = System.IO.Path.Combine(dir, fname);
+            System.IO.File.WriteAllText(path, sb.ToString());
+            Plugin.ChatGui.Print($"[MjAuto] hexdump → {path}  ({(end - start) / 16} rows)");
+        });
+    }
+
     private unsafe void HandleFindTiles()
     {
         Plugin.Framework.RunOnFrameworkThread(() =>
@@ -964,15 +1388,21 @@ public sealed class MjAutoCommand : IDisposable
     }
 
     /// <summary>
-    /// Scan a memory region for any int32 that decodes to a Doman tile texture id
-    /// under one of <paramref name="texBases"/>. Read-only, safely bounded — no
-    /// pointer-chasing, no struct dereferences.
+    /// Scan a memory region for tile-id-shaped values under several candidate
+    /// encodings. Read-only, safely bounded — no pointer-chasing, no struct
+    /// dereferences. Encodings tried per region:
+    ///   1. int32 = textureBase + tile_id (matches the hand encoding at +0xDB8)
+    ///   2. int32 = raw tile_id in [0, 34) — simplest format, no offset
+    ///   3. uint8 byte runs of length ≥ 4 with all bytes in [0, 34) and ≥ 3
+    ///      distinct values (filters out zero padding and constant fills)
     /// </summary>
     private static unsafe int ScanRegion(
         System.Text.StringBuilder sb, string label, byte* basePtr, int length, int[] texBases)
     {
         sb.AppendLine($"## {label}  base=0x{(nint)basePtr:X}  length=0x{length:X}");
         int matches = 0;
+
+        // Encoding 1: int32 with texture base offset.
         foreach (var texBase in texBases)
         {
             int forBase = 0;
@@ -983,13 +1413,71 @@ public sealed class MjAutoCommand : IDisposable
                 if (tileId < 0 || tileId >= Tile.Count34) continue;
                 forBase++;
                 var tile = Tile.FromId(tileId);
-                sb.AppendLine($"  base={texBase}  +0x{off:X4}: tex={tex} tile={tileId} ({tile})");
+                sb.AppendLine($"  i32+{texBase}  +0x{off:X4}: tex={tex} tile={tileId} ({tile})");
             }
             if (forBase > 0)
-                sb.AppendLine($"  -- {forBase} matches for base {texBase}");
+                sb.AppendLine($"  -- {forBase} matches for i32+{texBase}");
             matches += forBase;
         }
-        if (matches == 0) sb.AppendLine("  (no tile-encoded ints found in this region)");
+
+        // Encoding 2: raw int32 tile_id in [0, 34). 4-byte aligned only.
+        {
+            int rawHits = 0;
+            for (int off = 0; off + 4 <= length; off += 4)
+            {
+                int v = *(int*)(basePtr + off);
+                if (v < 0 || v >= Tile.Count34) continue;
+                rawHits++;
+                if (rawHits <= 64)
+                    sb.AppendLine($"  i32-raw   +0x{off:X4}: v={v} ({Tile.FromId(v)})");
+            }
+            if (rawHits > 64) sb.AppendLine($"  ... ({rawHits - 64} more raw-i32 hits suppressed)");
+            if (rawHits > 0) sb.AppendLine($"  -- {rawHits} raw-i32 hits");
+            matches += rawHits;
+        }
+
+        // Encoding 3: byte runs of length ≥ 4 with all bytes in [0, 34) and ≥ 3
+        // distinct values. Tile-id arrays packed as uint8 are the most common
+        // alternative format. The "≥ 3 distinct" filter rules out long runs of
+        // zero padding which dominate addon memory.
+        {
+            int runStart = -1;
+            int runLen = 0;
+            int runHits = 0;
+            var distinct = new System.Collections.Generic.HashSet<byte>();
+            void EmitRun(int endExclusive)
+            {
+                if (runStart < 0 || runLen < 4 || distinct.Count < 3) return;
+                runHits++;
+                var bytes = new byte[runLen];
+                for (int k = 0; k < runLen; k++) bytes[k] = basePtr[runStart + k];
+                var rendered = string.Join(",", bytes.Select(b => $"{b}({Tile.FromId(b)})"));
+                if (runHits <= 32)
+                    sb.AppendLine($"  bytes     +0x{runStart:X4}..+0x{endExclusive - 1:X4} ({runLen}): {rendered}");
+            }
+            for (int off = 0; off < length; off++)
+            {
+                byte b = basePtr[off];
+                if (b < Tile.Count34)
+                {
+                    if (runStart < 0) { runStart = off; runLen = 0; distinct.Clear(); }
+                    runLen++;
+                    distinct.Add(b);
+                }
+                else
+                {
+                    EmitRun(off);
+                    runStart = -1;
+                    runLen = 0;
+                }
+            }
+            EmitRun(length);
+            if (runHits > 32) sb.AppendLine($"  ... ({runHits - 32} more byte-run hits suppressed)");
+            if (runHits > 0) sb.AppendLine($"  -- {runHits} byte-runs");
+            matches += runHits;
+        }
+
+        if (matches == 0) sb.AppendLine("  (no tile-encoded values found in this region)");
         sb.AppendLine();
         return matches;
     }
