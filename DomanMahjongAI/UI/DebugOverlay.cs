@@ -156,17 +156,17 @@ public sealed class DebugOverlay : Window, IDisposable
             if (unit->AtkValues != null && unit->AtkValuesCount > 0)
             {
                 var v0 = unit->AtkValues[0];
-                string v0s = v0.Type == FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int ? v0.Int.ToString() : "?";
+                string v0s = v0.Type == FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int ? v0.Int.ToString() : "?";
                 string v1s = "-", v2s = "-";
                 if (unit->AtkValuesCount > 1)
                 {
                     var v1 = unit->AtkValues[1];
-                    v1s = v1.Type == FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int ? v1.Int.ToString() : v1.Type.ToString();
+                    v1s = v1.Type == FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int ? v1.Int.ToString() : v1.Type.ToString();
                 }
                 if (unit->AtkValuesCount > 2)
                 {
                     var v2 = unit->AtkValues[2];
-                    v2s = v2.Type == FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int ? v2.Int.ToString() : v2.Type.ToString();
+                    v2s = v2.Type == FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int ? v2.Int.ToString() : v2.Type.ToString();
                 }
                 atkLine = $"{v0s}   {v1s}   {v2s}";
             }

@@ -151,9 +151,9 @@ public sealed class InputEventLogger : IDisposable
         MeldCandidate? acceptedMeld = null;
         if (addon != null && MahjongAddon.IsMahjongAddon(addon->NameString)
             && valueCount == 2
-            && values[0].Type == FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int
+            && values[0].Type == FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int
             && values[0].Int == 11
-            && values[1].Type == FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int
+            && values[1].Type == FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int
             && values[1].Int == 0)
         {
             var preSnap = reader.TryBuildSnapshot();
@@ -233,11 +233,11 @@ public sealed class InputEventLogger : IDisposable
                         sb.Append($"{i}:{v.Type}=");
                         switch (v.Type)
                         {
-                            case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int:
+                            case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int:
                                 sb.Append(v.Int); break;
-                            case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.UInt:
+                            case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.UInt:
                                 sb.Append(v.UInt); break;
-                            case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Bool:
+                            case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Bool:
                                 sb.Append(v.Byte != 0); break;
                             default:
                                 sb.Append($"raw=0x{v.UInt:X}"); break;
@@ -317,11 +317,11 @@ public sealed class InputEventLogger : IDisposable
                 sb.Append($"{i}:{v.Type}=");
                 switch (v.Type)
                 {
-                    case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int:
+                    case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int:
                         sb.Append(v.Int); break;
-                    case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.UInt:
+                    case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.UInt:
                         sb.Append(v.UInt); break;
-                    case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Bool:
+                    case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Bool:
                         sb.Append(v.Byte != 0); break;
                     default:
                         sb.Append("?"); break;
@@ -391,17 +391,17 @@ public sealed class InputEventLogger : IDisposable
     {
         switch (v.Type)
         {
-            case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int:
+            case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int:
                 return $"{v.Type,-14} Int={v.Int}";
-            case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.UInt:
+            case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.UInt:
                 return $"{v.Type,-14} UInt={v.UInt} (0x{v.UInt:X})";
-            case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Bool:
+            case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Bool:
                 return $"{v.Type,-14} Bool={v.Byte != 0}";
-            case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String:
-            case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String8:
-            case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString:
+            case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.String:
+            case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.String8:
+            case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.ManagedString:
                 var s = v.String.Value != null
-                    ? System.Text.Encoding.UTF8.GetString(v.String)
+                    ? v.String.ToString()
                     : "(null)";
                 return $"{v.Type,-14} String=\"{s}\"";
             default:

@@ -290,7 +290,7 @@ public sealed class AutoPlayLoop : IDisposable
         if (!unit->IsVisible || unit->AtkValues == null || unit->AtkValuesCount == 0)
             return -1;
         var v = unit->AtkValues[0];
-        return v.Type == FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int ? v.Int : -1;
+        return v.Type == FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int ? v.Int : -1;
     }
 
     private void ScheduleDiscard()

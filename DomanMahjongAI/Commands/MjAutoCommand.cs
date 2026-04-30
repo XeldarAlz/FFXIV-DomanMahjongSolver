@@ -6,7 +6,7 @@ using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using System;
 using System.Linq;
-using ValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
+using ValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 
 namespace DomanMahjongAI.Commands;
 
@@ -576,7 +576,7 @@ public sealed class MjAutoCommand : IDisposable
             case ValueType.String8:
             case ValueType.ManagedString:
                 if (v.String.Value == null) return $"{v.Type,-14} (null)";
-                var s = System.Text.Encoding.UTF8.GetString(v.String);
+                var s = v.String.ToString();
                 if (s.Length > 80) s = s[..80] + "...";
                 return $"{v.Type,-14} \"{s.Replace("\n", "\\n")}\"";
             default:
@@ -762,7 +762,7 @@ public sealed class MjAutoCommand : IDisposable
         int atkCount = unit->AtkValuesCount;
         int stateCode = -1;
         if (atkValues != null && atkCount > 0
-            && atkValues[0].Type == FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int)
+            && atkValues[0].Type == FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int)
             stateCode = atkValues[0].Int;
         sb.AppendLine($"  stateCode={stateCode}  atkValuesCount={atkCount}");
 
@@ -775,17 +775,17 @@ public sealed class MjAutoCommand : IDisposable
                 sb.Append($"  [{i,3}] {v.Type,-14} ");
                 switch (v.Type)
                 {
-                    case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int:
+                    case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int:
                         sb.Append($"Int={v.Int}"); break;
-                    case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.UInt:
+                    case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.UInt:
                         sb.Append($"UInt={v.UInt} (0x{v.UInt:X})"); break;
-                    case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Bool:
+                    case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Bool:
                         sb.Append($"Bool={v.Byte != 0}"); break;
-                    case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String:
-                    case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String8:
-                    case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString:
+                    case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.String:
+                    case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.String8:
+                    case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.ManagedString:
                         var s = v.String.Value != null
-                            ? System.Text.Encoding.UTF8.GetString(v.String) : "(null)";
+                            ? v.String.ToString() : "(null)";
                         sb.Append($"String=\"{s}\""); break;
                     default:
                         sb.Append($"raw=0x{v.UInt:X}"); break;
@@ -1827,21 +1827,21 @@ public sealed class MjAutoCommand : IDisposable
             string display;
             switch (v.Type)
             {
-                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int:
+                case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int:
                     display = $"Int={v.Int}";
                     break;
-                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.UInt:
+                case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.UInt:
                     display = $"UInt={v.UInt} (0x{v.UInt:X})";
                     break;
-                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Bool:
+                case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Bool:
                     display = $"Bool={v.Byte != 0}";
                     break;
-                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String:
-                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String8:
-                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString:
-                    display = $"String=\"{(v.String.Value != null ? System.Text.Encoding.UTF8.GetString(v.String) : "(null)")}\"";
+                case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.String:
+                case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.String8:
+                case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.ManagedString:
+                    display = $"String=\"{(v.String.Value != null ? v.String.ToString() : "(null)")}\"";
                     break;
-                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Vector:
+                case FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Vector:
                     display = "Vector";
                     break;
                 default:

@@ -3,7 +3,7 @@ using FFXIVClientStructs.FFXIV.Component.GUI;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using ValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
+using ValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 
 namespace DomanMahjongAI.GameState.Variants;
 
@@ -361,7 +361,7 @@ internal abstract class BaseEmjVariant : IEmjVariant
                     case ValueType.String8:
                     case ValueType.ManagedString:
                         var s = v.String.Value != null
-                            ? System.Text.Encoding.UTF8.GetString(v.String)
+                            ? v.String.ToString()
                             : "(null)";
                         sb.Append($"String=\"{s}\"");
                         break;
@@ -605,7 +605,7 @@ internal abstract class BaseEmjVariant : IEmjVariant
                 v.Type != ValueType.ManagedString)
                 continue;
             if (v.String.Value == null) continue;
-            var s = System.Text.Encoding.UTF8.GetString(v.String);
+            var s = v.String.ToString();
             switch (s)
             {
                 case "Pon": offersPon = true; break;

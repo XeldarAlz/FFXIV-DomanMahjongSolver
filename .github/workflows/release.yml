@@ -55,8 +55,12 @@ jobs:
 
       - name: Download Dalamud dev build
         shell: pwsh
+        # Track the staging channel while API 15 / Patch 7.50 is in beta. The
+        # release channel still serves API 14 Dalamud, which won't satisfy a
+        # plugin built against Dalamud.NET.Sdk 15.x. Switch back to /latest.zip
+        # once Dalamud 15 GAs to the release channel.
         run: |
-          $dalamudUrl = "https://goatcorp.github.io/dalamud-distrib/latest.zip"
+          $dalamudUrl = "https://goatcorp.github.io/dalamud-distrib/stg/latest.zip"
           $dalamudDir = "$env:AppData\XIVLauncher\addon\Hooks\dev"
           New-Item -ItemType Directory -Force -Path $dalamudDir | Out-Null
           Invoke-WebRequest -Uri $dalamudUrl -OutFile dalamud.zip

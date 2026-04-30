@@ -127,12 +127,12 @@ public sealed class InputDispatcher
         for (int i = 0; i < scanEnd; i++)
         {
             var v = atkValues[i];
-            if (v.Type != FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String &&
-                v.Type != FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String8 &&
-                v.Type != FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString)
+            if (v.Type != FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.String &&
+                v.Type != FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.String8 &&
+                v.Type != FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.ManagedString)
                 continue;
             if (v.String.Value == null) continue;
-            var s = System.Text.Encoding.UTF8.GetString(v.String);
+            var s = v.String.ToString();
             switch (s)
             {
                 case "Pon":
