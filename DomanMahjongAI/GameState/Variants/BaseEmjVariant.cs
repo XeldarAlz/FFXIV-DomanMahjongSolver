@@ -54,14 +54,27 @@ internal abstract class BaseEmjVariant : IEmjVariant
     /// Fingerprint check. Passes when:
     ///   1. self-score word at +0x0500 is in the plausible mahjong range
     ///   2. call-modal host node (id=104) exists
-    ///   3. every populated hand slot at +0x0DB8 decodes to a valid tile_id
-    ///      under <see cref="TileTextureBase"/>
+    ///   3. populated hand slots at +0x0DB8 mostly decode to valid tile_ids
+    ///      under <see cref="TileTextureBase"/> — tolerating up to
+    ///      <see cref="MaxAkadoraSlots"/> unknown slots per hand
     ///
     /// Check (3) is what distinguishes Emj from EmjL on a live hand: tile
     /// encodings use non-overlapping texture ranges, so a hand populated
     /// with Emj textures (76041+) fails EmjL's probe and vice versa. When
     /// the hand is empty (between rounds) no tile check runs and the
     /// <see cref="VariantSelector"/> falls back to a name-based tiebreaker.
+    ///
+    /// <para>The soft tolerance is for aka-dora (issue #32): red 5m/5p/5s
+    /// render from a texture id outside the canonical [base, base+34) range,
+    /// so a hard "any unknown slot fails the probe" check made every hand
+    /// holding an aka-dora go un-resolved — wiping the entire Live Game
+    /// panel. With at most three red 5s in the deck (one per suit), allowing
+    /// up to three unknown populated slots keeps wrong-base rejection clean
+    /// while no longer collapsing on aka-dora frames. The hand reader in
+    /// <see cref="TryBuildSnapshot"/> still skips the unknown slots, so the
+    /// decoded hand will be short by however many reds it holds — that's a
+    /// known follow-up (proper red-5 decoding needs a captured texture-id
+    /// dump from a frame where one is in hand).</para>
     /// </summary>
     public unsafe bool Probe(AtkUnitBase* unit)
     {
@@ -72,21 +85,30 @@ internal abstract class BaseEmjVariant : IEmjVariant
 
         if (unit->GetNodeById(104) == null) return false;
 
-        // Hand-tile encoding check: stop at the first empty slot (matches the
-        // reader's break-on-zero semantics; slots 0..12 are contiguous with
-        // any trailing slot 13 for the just-drawn tile). Any populated slot
-        // whose decode falls outside [0, 34) proves this variant's
-        // TileTextureBase is wrong for this addon.
         byte* basePtr = (byte*)unit;
+        int valid = 0;
+        int unknown = 0;
         for (int i = 0; i < 14; i++)
         {
             int raw = *(int*)(basePtr + 0xDB8 + i * 4);
             if (raw == 0) break;
             int tileId = raw - TileTextureBase;
-            if (tileId < 0 || tileId >= Tile.Count34) return false;
+            if (tileId >= 0 && tileId < Tile.Count34) valid++;
+            else unknown++;
         }
-        return true;
+        // Empty-hand frame (startup / between rounds): no tile evidence either
+        // way. Pass so the selector can fall back to the name tiebreaker.
+        if (valid == 0 && unknown == 0) return true;
+        return valid >= 1 && unknown <= MaxAkadoraSlots;
     }
+
+    /// <summary>
+    /// Maximum number of populated hand slots a Probe will tolerate decoding
+    /// outside the canonical [0, 34) tile range. Sized to the count of red 5s
+    /// in a Doman deck (one per suit = 3). Bumping this would weaken the
+    /// wrong-base rejection that distinguishes Emj from EmjL on live hands.
+    /// </summary>
+    private const int MaxAkadoraSlots = 3;
 
     /// <inheritdoc />
     /// <remarks>
