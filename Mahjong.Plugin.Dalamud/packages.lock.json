@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0-windows7.0": {
+      "DalamudPackager": {
+        "type": "Direct",
+        "requested": "[15.0.0, )",
+        "resolved": "15.0.0",
+        "contentHash": "411vwC8/X8Z/sQ2TI6v3SvOn66xFPeOjFn3Zn+h0d3Ox2t1kFm66AhDvmx/qcMwVrR+Hidxj0dadpQ2dgyXMBQ=="
+      },
+      "DotNet.ReproducibleBuilds": {
+        "type": "Direct",
+        "requested": "[1.2.39, )",
+        "resolved": "1.2.39",
+        "contentHash": "fcFN01tDTIQqDuTwr1jUQK/geofiwjG5DycJQOnC72i1SsLAk1ELe+apBOuZ11UMQG8YKFZG1FgvjZPbqHyatg=="
+      },
+      "Microsoft.Extensions.DependencyInjection": {
+        "type": "Direct",
+        "requested": "[9.0.0, )",
+        "resolved": "9.0.0",
+        "contentHash": "MCPrg7v3QgNMr0vX4vzRXvkNGgLg8vKWX0nKCWUxu2uPyMsaRgiRc1tHBnbTcfJMhMKj2slE/j2M9oGkd25DNw==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "9.0.0"
+        }
+      },
+      "Microsoft.Extensions.DependencyInjection.Abstractions": {
+        "type": "Transitive",
+        "resolved": "9.0.0",
+        "contentHash": "+6f2qv2a3dLwd5w6JanPIPs47CxRbnk+ZocMJUhv9NxP88VlOcJYZs9jY+MYSjxvady08bUZn6qgiNh7DadGgg=="
+      },
+      "mahjong.core": {
+        "type": "Project"
+      },
+      "mahjong.engine": {
+        "type": "Project",
+        "dependencies": {
+          "Mahjong.Core": "[0.0.0.26, )",
+          "Mahjong.Rules": "[0.0.0.26, )"
+        }
+      },
+      "mahjong.plugin.game": {
+        "type": "Project",
+        "dependencies": {
+          "Mahjong.Core": "[0.0.0.26, )",
+          "Mahjong.Policy.Abstractions": "[0.0.0.26, )"
+        }
+      },
+      "mahjong.policy": {
+        "type": "Project",
+        "dependencies": {
+          "Mahjong.Core": "[0.0.0.26, )",
+          "Mahjong.Engine": "[0.0.0.26, )",
+          "Mahjong.Policy.Abstractions": "[0.0.0.26, )",
+          "Mahjong.Rules": "[0.0.0.26, )"
+        }
+      },
+      "mahjong.policy.abstractions": {
+        "type": "Project",
+        "dependencies": {
+          "Mahjong.Core": "[0.0.0.26, )"
+        }
+      },
+      "mahjong.rules": {
+        "type": "Project",
+        "dependencies": {
+          "Mahjong.Core": "[0.0.0.26, )"
+        }
+      }
+    }
+  }
+}

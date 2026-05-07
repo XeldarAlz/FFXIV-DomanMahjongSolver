@@ -1,0 +1,78 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+
+  <PropertyGroup>
+    <Description>Autonomous AI for FFXIV Doman Mahjong — heuristic + ISMCTS policy with Bayesian opponent modeling.</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!--
+    Expose `internal` types to the test project so the mock-adapter suite
+    can drive collaborators that don't need a public surface (config
+    migrators, internal logging sinks, etc.). Keeps the plugin's external
+    API tight without forcing test access via reflection.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Mahjong.Plugin.Dalamud.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mahjong.Core\Mahjong.Core.csproj" />
+    <ProjectReference Include="..\Mahjong.Policy.Abstractions\Mahjong.Policy.Abstractions.csproj" />
+    <ProjectReference Include="..\Mahjong.Plugin.Game\Mahjong.Plugin.Game.csproj" />
+    <ProjectReference Include="..\Mahjong.Rules\Mahjong.Rules.csproj" />
+    <ProjectReference Include="..\Mahjong.Engine\Mahjong.Engine.csproj" />
+    <ProjectReference Include="..\Mahjong.Policy\Mahjong.Policy.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
+  </ItemGroup>
+
+  <!--
+    Reloaded.Hooks ships with Dalamud's hooks folder. We need it for the
+    AsmHook mid-function detour used by NativeAsmDiscardCapture. Reference the dlls
+    directly out of the runtime hooks folder; both are stable filenames
+    provided by every Dalamud installation.
+  -->
+  <ItemGroup>
+    <Reference Include="Reloaded.Hooks.Definitions">
+      <HintPath>$(DalamudLibPath)Reloaded.Hooks.Definitions.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="goatcorp.Reloaded.Hooks">
+      <HintPath>$(DalamudLibPath)goatcorp.Reloaded.Hooks.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="images\icon.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!--
+      Layout-profile data files. Each `*.json` describes one Mahjong-addon
+      variant; the plugin loads them at runtime. Dropping a new variant in
+      data/layouts/ ships it via DalamudPackager — no code change.
+    -->
+    <Content Include="..\data\layouts\*.json"
+             Link="layouts\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!--
+    DalamudPackager doesn't include our images/ folder in latest.zip.
+    Patch it in afterwards so the plugin icon ships with the release.
+  -->
+  <Target Name="BundleIcon"
+          AfterTargets="DefaultDalamudPackagerRelease"
+          Condition="'$(Configuration)' == 'Release'">
+    <PropertyGroup>
+      <ZipPath>$(ProjectDir)$(OutputPath)$(AssemblyName)\latest.zip</ZipPath>
+      <IconPath>$(ProjectDir)images\icon.png</IconPath>
+    </PropertyGroup>
+    <Exec WorkingDirectory="$(ProjectDir)"
+          Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)bundle_icon.ps1&quot; -ZipPath &quot;$(ZipPath)&quot; -IconPath &quot;$(IconPath)&quot;"
+          Condition="Exists('$(ZipPath)') and Exists('$(IconPath)')" />
+  </Target>
+
+</Project>
