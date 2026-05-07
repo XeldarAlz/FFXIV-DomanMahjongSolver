@@ -1,0 +1,40 @@
+{
+  "name": "EmjL",
+  "addonName": "EmjL",
+  "tileTextureBase": 76003,
+  "offsets": {
+    "selfScore": "0x0500",
+    "shimochaScore": "0x07E0",
+    "toimenScore": "0x0AC0",
+    "kamichaScore": "0x0DA0",
+    "selfDiscardCountByte": "0x04FE",
+    "shimochaDiscardCountByte": "0x07DE",
+    "toimenDiscardCountByte": "0x0ABE",
+    "kamichaDiscardCountByte": "0x0D9E",
+    "handArrayStart": "0x0DB8",
+    "doraIndicator": "0x0FD8"
+  },
+  "nodeIds": {
+    "callModalHost": 104,
+    "callModalShell": 3
+  },
+  "atkValues": {
+    "stateCode": 0,
+    "wallCount": 1,
+    "chiClaimedTile": 19
+  },
+  "stateCodes": {
+    "ourTurnDiscard": 30,
+    "callPrompt": 15,
+    "callPromptList": 28,
+    "selfDeclareList": 6,
+    "postDrawIdle": 5
+  },
+  "limits": {
+    "handSize": 14,
+    "wallInitial": 70,
+    "scoreSanityMax": 200000,
+    "discardCountSanityMax": 40,
+    "maxAkadoraSlots": 3
+  }
+}

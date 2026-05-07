@@ -1,0 +1,5 @@
+{
+  "upload_url": "https://mahjong-telemetry.example.workers.dev/v1/upload",
+  "enabled": true,
+  "min_plugin_version": null
+}

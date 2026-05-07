@@ -1,0 +1,28 @@
+# Cloudflare Worker config for the Mahjong telemetry ingest.
+#
+# Before deploying:
+#   1. wrangler r2 bucket create mahjong-telemetry
+#   2. wrangler kv:namespace create RATE_LIMIT_KV
+#      (paste the returned id below into kv_namespaces.id)
+#   3. wrangler deploy
+#
+# After deploying, take the *.workers.dev URL the CLI prints and write it
+# into ../server/telemetry-endpoint.json so plugin installs pick it up.
+
+name = "mahjong-telemetry"
+main = "worker.ts"
+compatibility_date = "2026-01-01"
+
+# R2 bucket — stores the gzipped uploads. Keyed by {stream}/{install_id}/{date}/{filename}.gz.
+[[r2_buckets]]
+binding = "TELEMETRY_BUCKET"
+bucket_name = "mahjong-telemetry"
+
+# KV namespace — per-install daily byte counters for the rate limiter.
+[[kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "ab37c6e1ce4f452c9e4df65f4185f0f0"
+
+# Free plan limits are fine for this workload: 100k requests/day, 10ms CPU
+# per request. We're nowhere near either ceiling at the volumes this
+# plugin's user base produces.

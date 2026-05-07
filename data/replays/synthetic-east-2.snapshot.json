@@ -1,0 +1,33 @@
+{
+  "source": "synthetic-east-2.tenhou.json",
+  "seat": 0,
+  "totalDecisions": 4,
+  "matches": 4,
+  "accuracy": 1,
+  "decisions": [
+    {
+      "turn": 0,
+      "actual": "1z",
+      "policy": "1z",
+      "matched": true
+    },
+    {
+      "turn": 1,
+      "actual": "3z",
+      "policy": "3z",
+      "matched": true
+    },
+    {
+      "turn": 2,
+      "actual": "5z",
+      "policy": "5z",
+      "matched": true
+    },
+    {
+      "turn": 3,
+      "actual": "7z",
+      "policy": "7z",
+      "matched": true
+    }
+  ]
+}
