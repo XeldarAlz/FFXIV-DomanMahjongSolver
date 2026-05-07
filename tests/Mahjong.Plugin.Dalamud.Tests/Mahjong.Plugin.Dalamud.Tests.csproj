@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Mock-adapter test suite for the Dalamud-coupled plugin shell.
+
+    Uses a regular Microsoft.NET.Sdk (not Dalamud.NET.Sdk) so xunit can drive
+    the assembly directly without bootstrapping Dalamud. Tests construct the
+    plugin's components with hand-rolled stubs of the Dalamud service
+    interfaces (IPluginLog, IFramework, IDalamudPluginInterface, ...) and
+    exercise the constructor-injection seam set up in Phase 7.B-4.
+
+    Tests that touch unsafe AtkUnitBase* memory live elsewhere — that surface
+    requires a live game and isn't unit-testable. What we DO cover here:
+    configuration migration / persistence, file-output sinks, discard
+    capture strategies, the action state machine, and the lifecycle wiring
+    of components that subscribe to IFramework / IAddonLifecycle events.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>Mahjong.Plugin.Dalamud.Tests</RootNamespace>
+    <AssemblyName>Mahjong.Plugin.Dalamud.Tests</AssemblyName>
+    <DalamudLibPath Condition="'$(AppData)' != ''">$(AppData)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Mahjong.Core\Mahjong.Core.csproj" />
+    <ProjectReference Include="..\..\Mahjong.Plugin.Game\Mahjong.Plugin.Game.csproj" />
+    <ProjectReference Include="..\..\Mahjong.Plugin.Dalamud\Mahjong.Plugin.Dalamud.csproj" />
+  </ItemGroup>
+
+  <!--
+    Reference Dalamud's DLLs directly out of the local XIVLauncher install.
+    The plugin csproj does the same; mirroring it here lets a regular test
+    SDK compile against Dalamud-typed parameters in the plugin shell. The
+    hint paths fail closed if Dalamud isn't installed — the test project
+    just won't restore.
+  -->
+  <ItemGroup>
+    <Reference Include="Dalamud">
+      <HintPath>$(DalamudLibPath)Dalamud.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="FFXIVClientStructs">
+      <HintPath>$(DalamudLibPath)FFXIVClientStructs.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Serilog">
+      <HintPath>$(DalamudLibPath)Serilog.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>
