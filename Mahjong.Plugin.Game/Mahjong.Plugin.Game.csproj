@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Mahjong.Plugin.Game — Dalamud-free contracts and data for the FFXIV plugin layer.
+
+    Contains:
+      * Pure value types (LayoutProfile, Result<T, E>, ReadError, ...).
+      * Contract interfaces that the Dalamud-coupled plugin implements
+        (IGameClientAdapter, IAddonReader, IActionDispatcher, IConfigService,
+        IEventLog, IFrameworkScheduler, IDiscardCapture, IMeldRecorder).
+      * The JSON layout-profile loader — every variant-specific constant
+        (memory offsets, node IDs, opcodes, texture bases) lives in
+        data/layouts/*.json files this project parses.
+
+    Adding a new client variant (JP, OC) is a JSON file in data/layouts/
+    plus a one-line registration in the plugin shell — never a code change
+    to this project.
+
+    Consumers: Mahjong.Plugin.Dalamud (implements the contracts), tests for
+    plugin logic that don't need Dalamud running.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Mahjong.Plugin.Game</RootNamespace>
+    <AssemblyName>Mahjong.Plugin.Game</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mahjong.Core\Mahjong.Core.csproj" />
+    <ProjectReference Include="..\Mahjong.Policy.Abstractions\Mahjong.Policy.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>
