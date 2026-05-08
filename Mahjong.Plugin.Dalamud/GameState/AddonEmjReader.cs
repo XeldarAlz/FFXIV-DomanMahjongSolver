@@ -80,6 +80,7 @@ public sealed class AddonEmjReader : IDisposable
         MahjongAddon addon,
         MeldTracker meldTracker,
         string pluginConfigDir,
+        string layoutsDir,
         IFindingsLog? findings = null)
     {
         ArgumentNullException.ThrowIfNull(addonLifecycle);
@@ -87,13 +88,14 @@ public sealed class AddonEmjReader : IDisposable
         ArgumentNullException.ThrowIfNull(addon);
         ArgumentNullException.ThrowIfNull(meldTracker);
         ArgumentException.ThrowIfNullOrEmpty(pluginConfigDir);
+        ArgumentException.ThrowIfNullOrEmpty(layoutsDir);
         this.addonLifecycle = addonLifecycle;
         this.log = log;
         this.addon = addon;
         this.meldTracker = meldTracker;
         this.findings = findings;
 
-        selector = new VariantSelector(LoadRegisteredVariants(log, pluginConfigDir, findings), log, findings);
+        selector = new VariantSelector(LoadRegisteredVariants(log, pluginConfigDir, layoutsDir, findings), log, findings);
 
         // Register against every known Mahjong addon name (issue #13): some clients
         // expose "Emj", others "EmjL". Whichever one exists locally will fire — the
@@ -115,9 +117,8 @@ public sealed class AddonEmjReader : IDisposable
     /// then reports "No Emj variant matched" loudly via its existing path.
     /// </summary>
     private static IReadOnlyList<IEmjVariant> LoadRegisteredVariants(
-        IPluginLog log, string pluginConfigDir, IFindingsLog? findings)
+        IPluginLog log, string pluginConfigDir, string layoutsDir, IFindingsLog? findings)
     {
-        var layoutsDir = Path.Combine(AppContext.BaseDirectory, "layouts");
         try
         {
             var profiles = JsonLayoutProfileLoader.LoadAll(layoutsDir);

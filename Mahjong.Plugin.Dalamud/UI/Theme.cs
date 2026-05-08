@@ -135,9 +135,15 @@ internal static class Theme
             dl.ChannelsSetCurrent(1);
             start = ImGui.GetCursorScreenPos();
             width = ImGui.GetContentRegionAvail().X;
+            // PushTextWrapPos takes a WINDOW-LOCAL X (ImGui internally adds
+            // window.Pos.x when wrap_pos_x > 0). GetCursorPosX is already
+            // window-local; using start.X (screen coord) here would push the
+            // wrap point ~window.Pos.x pixels too far right and the long
+            // TextWrapped lines wouldn't wrap inside the card.
+            float startLocalX = ImGui.GetCursorPosX();
             ImGui.Dummy(new Vector2(0, pad.Y));
             ImGui.Indent(pad.X);
-            ImGui.PushTextWrapPos(start.X + width - pad.X);
+            ImGui.PushTextWrapPos(startLocalX + width - pad.X);
         }
 
         public void Dispose()

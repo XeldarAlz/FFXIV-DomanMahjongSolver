@@ -174,8 +174,17 @@ public sealed class Plugin : IDalamudPlugin
         var mahjongAddon = Services.GetRequiredService<MahjongAddon>();
         Dispatcher = new InputDispatcher(mahjongAddon);
 
+        // `IDalamudPluginInterface.AssemblyLocation` is the only reliable way
+        // to locate sibling files — `Assembly.Location` and
+        // `AppContext.BaseDirectory` both come back empty inside Dalamud's
+        // plugin AssemblyLoadContext (verified empirically in the findings
+        // stream). Layouts live in `<plugin-dir>/layouts/*.json`, copied
+        // there by the .csproj as build content.
+        var pluginAssemblyDir = PluginInterface.AssemblyLocation.DirectoryName ?? configDir;
+        var layoutsDir = Path.Combine(pluginAssemblyDir, "layouts");
+
         AddonReader = new AddonEmjReader(
-            AddonLifecycle, Log, mahjongAddon, MeldTracker, configDir, FindingsLog);
+            AddonLifecycle, Log, mahjongAddon, MeldTracker, configDir, layoutsDir, FindingsLog);
         Aggregator = new StateAggregator(AddonReader, Framework);
         EventLogger = new InputEventLogger(
             AddonReader, MeldTracker, AddonLifecycle, GameInterop, Log, mahjongAddon, configDir);

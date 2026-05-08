@@ -143,7 +143,18 @@ public static class PluginServices
             new Rollout(sp.GetRequiredService<IRandomSource>(),
                         sp.GetRequiredService<IWeightProvider>().Current.Rollout));
 
-        services.AddSingleton<EfficiencyPolicy>();
+        // Explicit factory pins the 5-arg DI constructor — `EfficiencyPolicy`
+        // also exposes an `IWeightProvider?`-only convenience ctor, and
+        // Microsoft.Extensions.DependencyInjection refuses to pick between
+        // two resolvable ctors (throws "ambiguous" at runtime). Naming the
+        // constructor here keeps `Mahjong.Policy` free of an MS.DI dep.
+        services.AddSingleton<EfficiencyPolicy>(sp =>
+            new EfficiencyPolicy(
+                sp.GetRequiredService<IOpponentModel>(),
+                sp.GetRequiredService<IDiscardPolicy>(),
+                sp.GetRequiredService<ICallPolicy>(),
+                sp.GetRequiredService<IRiichiPolicy>(),
+                sp.GetRequiredService<IPushFoldPolicy>()));
         services.AddSingleton<IsmctsPolicy>(sp =>
             new IsmctsPolicy(rng: sp.GetRequiredService<IRandomSource>()));
 
