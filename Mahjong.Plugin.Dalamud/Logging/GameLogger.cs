@@ -56,7 +56,6 @@ public sealed class GameLogger : IDisposable
     private readonly object writerLock = new();
     private readonly Func<IPolicy>? policyAccessor;
 
-    private StreamWriter? writer;
     private string? currentPath;
     private int handSeq;
     private int lastWall = -1;
@@ -93,7 +92,6 @@ public sealed class GameLogger : IDisposable
             return;
         disposed = true;
         aggregator.Changed -= OnStateChanged;
-        CloseWriter();
     }
 
     private void OnStateChanged(StateSnapshot snap)
@@ -190,7 +188,7 @@ public sealed class GameLogger : IDisposable
     /// </summary>
     private void MaybeRollHand(StateSnapshot snap)
     {
-        bool isNewHand = writer is null || snap.WallRemaining > lastWall + 5;
+        bool isNewHand = currentPath is null || snap.WallRemaining > lastWall + 5;
         lastWall = snap.WallRemaining;
         if (!isNewHand)
             return;
@@ -213,33 +211,39 @@ public sealed class GameLogger : IDisposable
     {
         lock (writerLock)
         {
-            CloseWriterLocked();
             handSeq++;
             var fn = $"game-{DateTime.UtcNow:yyyyMMdd-HHmmss}-hand{handSeq:D2}.ndjson";
             currentPath = Path.Combine(gamesDir, fn);
-            writer = new StreamWriter(new FileStream(
-                currentPath, FileMode.Append, FileAccess.Write, FileShare.Read))
-            { AutoFlush = true };
         }
     }
 
-    private void CloseWriter()
-    {
-        lock (writerLock)
-            CloseWriterLocked();
-    }
-
-    private void CloseWriterLocked()
-    {
-        writer?.Flush();
-        writer?.Dispose();
-        writer = null;
-    }
-
+    /// <summary>
+    /// Open-write-close per line. Holding a persistent <see cref="StreamWriter"/>
+    /// across the hand created an active writer handle that prevented
+    /// <see cref="Telemetry.TelemetryUploader"/>'s scan tick from reading the
+    /// file (the uploader's <c>FileShare.Read</c> request fails when an open
+    /// handle has Write access). Per-line opens match the
+    /// <see cref="ErrorSink"/> / <see cref="FindingsLog"/> pattern; volume is
+    /// low enough (≤ a few writes per turn after the dedup fix) that the
+    /// extra syscalls are immaterial.
+    /// </summary>
     private void WriteLine(string line)
     {
+        if (currentPath is null)
+            return;
         lock (writerLock)
-        { writer?.WriteLine(line); }
+        {
+            try
+            {
+                using var w = new StreamWriter(new FileStream(
+                    currentPath, FileMode.Append, FileAccess.Write, FileShare.Read));
+                w.WriteLine(line);
+            }
+            catch (Exception ex)
+            {
+                log.Error($"GameLogger write error: {ex.Message}");
+            }
+        }
     }
 
     /// <summary>
