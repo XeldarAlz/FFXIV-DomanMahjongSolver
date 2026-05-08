@@ -75,9 +75,35 @@ public sealed record TelemetryEnvelope(
         return Convert.ToHexString(hash).Substring(0, 16);
     }
 
+    /// <summary>
+    /// FFXIV's real build string (e.g. <c>"2025.04.27.0000.0000"</c>) lives in
+    /// <c>ffxivgame.ver</c> next to the exe — Square Enix leaves the PE header
+    /// FileVersion at the unset placeholder <c>"1, 0, 0, 0"</c>, which is what
+    /// every install reports if you go through <see cref="FileVersionInfo"/>.
+    /// Without the real string, cross-patch corpus analysis can't tell which
+    /// build any given upload came from.
+    ///
+    /// Fall back to the placeholder only if the file is missing — better to
+    /// ship something than to break the upload.
+    /// </summary>
     private static string GetGameVersion()
     {
         var module = Process.GetCurrentProcess().MainModule;
+        var exePath = module?.FileName;
+        if (!string.IsNullOrEmpty(exePath))
+        {
+            var dir = Path.GetDirectoryName(exePath);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                var verPath = Path.Combine(dir, "ffxivgame.ver");
+                if (File.Exists(verPath))
+                {
+                    var content = File.ReadAllText(verPath).Trim();
+                    if (!string.IsNullOrEmpty(content))
+                        return content;
+                }
+            }
+        }
         return module?.FileVersionInfo.FileVersion
             ?? module?.FileVersionInfo.ProductVersion
             ?? "unknown";

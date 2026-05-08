@@ -190,7 +190,10 @@ public sealed class Plugin : IDalamudPlugin
             AddonReader, MeldTracker, AddonLifecycle, GameInterop, Log, mahjongAddon, configDir);
         AddonReader.EventLogger = EventLogger;
         InputRecorder = new InputRecorder(EventLogger, configDir);
-        GameLogger = new GameLogger(Aggregator, ConfigService, Log, configDir);
+        // `() => Policy` so the logger always sees the user's currently-active
+        // tier (efficiency vs. mcts), even after a SetPolicy switch — Plugin.Policy
+        // is mutable and replaced wholesale on tier change.
+        GameLogger = new GameLogger(Aggregator, ConfigService, Log, configDir, () => Policy);
         AutoPlay = new AutoPlayLoop(this, Framework, Log, mahjongAddon);
 
         // Discard capture: native asm hook on the discard-write site (verified

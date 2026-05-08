@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -14,9 +15,10 @@ namespace Mahjong.Plugin.Dalamud.Logging;
 
 /// <summary>
 /// Per-hand NDJSON game logger. Subscribes to <see cref="StateAggregator.Changed"/>
-/// and emits one JSON line per state diff plus one per dispatched action. Feeds the
-/// Doman-specific training corpus — every game played produces labeled (state,
-/// action) episodes that later back supervised policy training.
+/// and emits one JSON line per *changed* state plus one per dispatched action.
+/// Feeds the Doman-specific training corpus — every game played produces
+/// labeled (state, decision, action) episodes that later back supervised
+/// policy training.
 ///
 /// Output: <c>%AppData%\XIVLauncher\pluginConfigs\Mahjong.Plugin.Dalamud\games\game-YYYYMMDD-HHMMSS-handNN.ndjson</c>.
 ///
@@ -24,10 +26,19 @@ namespace Mahjong.Plugin.Dalamud.Logging;
 /// <list type="bullet">
 ///   <item><c>hand-start</c> — first event in a file; seat/wind/dealer context.</item>
 ///   <item><c>state</c>      — snapshot diff from the aggregator.</item>
+///   <item><c>decision</c>   — policy.Choose() output paired with the state above.</item>
 ///   <item><c>action</c>     — our dispatch (discard/call/riichi/tsumo...).</item>
 /// </list>
-/// Schema version bumps invalidate old parsers. Keep field names short — at
-/// ~500 B/tick across many games, every byte counts.
+///
+/// <para><b>Hash-dedup:</b> StateAggregator.Changed fires every framework tick the
+/// addon reads cleanly, even when nothing about the game state actually moved
+/// — first observed in the 2026-05-08 corpus where one turn produced 1268
+/// identical state lines. We compute a structural hash of every snapshot and
+/// skip writes whose hash matches the previous frame. Only the timestamp
+/// would have differed; nothing is lost.</para>
+///
+/// <para>Schema version bumps invalidate old parsers. Keep field names short —
+/// at ~500 B/tick across many games, every byte counts.</para>
 /// </summary>
 public sealed class GameLogger : IDisposable
 {
@@ -43,11 +54,13 @@ public sealed class GameLogger : IDisposable
     private readonly IPluginLog log;
     private readonly string gamesDir;
     private readonly object writerLock = new();
+    private readonly Func<IPolicy>? policyAccessor;
 
     private StreamWriter? writer;
     private string? currentPath;
     private int handSeq;
     private int lastWall = -1;
+    private int? lastStateHash;
     private bool disposed;
 
     public string? CurrentPath => currentPath;
@@ -58,7 +71,8 @@ public sealed class GameLogger : IDisposable
         StateAggregator aggregator,
         IConfigService<Configuration> configService,
         IPluginLog log,
-        string pluginConfigDir)
+        string pluginConfigDir,
+        Func<IPolicy>? policyAccessor = null)
     {
         ArgumentNullException.ThrowIfNull(aggregator);
         ArgumentNullException.ThrowIfNull(configService);
@@ -67,6 +81,7 @@ public sealed class GameLogger : IDisposable
         this.aggregator = aggregator;
         this.configService = configService;
         this.log = log;
+        this.policyAccessor = policyAccessor;
         gamesDir = Path.Combine(pluginConfigDir, "games");
         Directory.CreateDirectory(gamesDir);
         aggregator.Changed += OnStateChanged;
@@ -85,14 +100,58 @@ public sealed class GameLogger : IDisposable
     {
         if (!configService.Current.EnableGameLogging)
             return;
+
+        // Skip ticks where nothing semantically changed. StateAggregator.Changed
+        // fires per-frame even when a re-read of the addon produces a byte-for-
+        // byte identical snapshot; without this guard one turn produces ~1200
+        // duplicate lines.
+        int hash = ComputeContentHash(snap);
+        if (lastStateHash == hash)
+            return;
+        lastStateHash = hash;
+
         try
         {
             MaybeRollHand(snap);
             WriteLine(JsonSerializer.Serialize(BuildStateEvent(snap), JsonOpts));
+            MaybeRecordDecision(snap);
         }
         catch (Exception ex)
         {
             log.Error($"GameLogger state-write error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Pair each state with the policy's verdict for that exact state. The
+    /// snap-hash dedup above ensures we only call Choose when the game state
+    /// actually changed; this keeps decision logging cheap (≤ a few calls per
+    /// turn) and the corpus contains one (state, decision) pair per moment
+    /// that mattered. Without this, suggestion-vs-highlight bugs are invisible
+    /// once a session ends — the policy's output isn't otherwise persisted.
+    /// </summary>
+    private void MaybeRecordDecision(StateSnapshot snap)
+    {
+        if (policyAccessor is null)
+            return;
+        // No actionable legal flag = nothing to decide (e.g. AI's turn). The
+        // policy still returns Pass with a default reason; logging that for
+        // every state diff would just be noise.
+        if (snap.Legal.Flags == ActionFlags.None)
+            return;
+        ActionChoice choice;
+        try
+        { choice = policyAccessor().Choose(snap); }
+        catch (Exception ex)
+        {
+            log.Error($"GameLogger decision-eval error: {ex.Message}");
+            return;
+        }
+        try
+        { WriteLine(JsonSerializer.Serialize(BuildDecisionEvent(choice), JsonOpts)); }
+        catch (Exception ex)
+        {
+            log.Error($"GameLogger decision-write error: {ex.Message}");
         }
     }
 
@@ -183,6 +242,66 @@ public sealed class GameLogger : IDisposable
         { writer?.WriteLine(line); }
     }
 
+    /// <summary>
+    /// Structural hash over every snapshot field that the corpus cares about —
+    /// turn, wall, our hand, melds, dora, riichi/ippatsu flags, legal action
+    /// set, scores, and every seat's discard pile + meld set + riichi flags.
+    /// Excludes the snapshot timestamp; only content drives equality.
+    /// </summary>
+    private static int ComputeContentHash(StateSnapshot snap)
+    {
+        var h = new HashCode();
+        h.Add(snap.WallRemaining);
+        h.Add(snap.TurnIndex);
+        h.Add((int)snap.Legal.Flags);
+        h.Add(snap.OurRiichi);
+        h.Add(snap.OurIppatsu);
+        h.Add(snap.OurSeat);
+        h.Add(snap.RoundWind);
+        h.Add(snap.DealerSeat);
+        h.Add(snap.Honba);
+        h.Add(snap.RiichiSticks);
+        foreach (var t in snap.Hand)
+            h.Add(t.Id);
+        foreach (var m in snap.OurMelds)
+        {
+            h.Add((int)m.Kind);
+            foreach (var t in m.Tiles)
+                h.Add(t.Id);
+        }
+        foreach (var t in snap.DoraIndicators)
+            h.Add(t.Id);
+        foreach (var s in snap.Scores)
+            h.Add(s);
+        foreach (var s in snap.Seats)
+        {
+            h.Add(s.DiscardCount);
+            foreach (var t in s.Discards)
+                h.Add(t.Id);
+            foreach (var m in s.Melds)
+            {
+                h.Add((int)m.Kind);
+                foreach (var t in m.Tiles)
+                    h.Add(t.Id);
+            }
+            h.Add(s.Riichi);
+            h.Add(s.RiichiDiscardIndex);
+            h.Add(s.Ippatsu);
+        }
+        return h.ToHashCode();
+    }
+
+    private static DecisionEvent BuildDecisionEvent(ActionChoice choice) => new(
+        T: Now(),
+        E: "decision",
+        Kind: choice.Kind.ToString(),
+        Tile: choice.DiscardTile?.Id,
+        CallKind: choice.Call?.Kind.ToString(),
+        Why: string.IsNullOrEmpty(choice.Reasoning) ? null : choice.Reasoning,
+        Steps: choice.Steps is { Count: > 0 } steps
+            ? steps.Select(r => new StepDto(K: r.Code, D: r.Display)).ToArray()
+            : null);
+
     private static StateEvent BuildStateEvent(StateSnapshot snap) => new(
         T: Now(),
         E: "state",
@@ -249,6 +368,19 @@ public sealed class GameLogger : IDisposable
         [property: JsonPropertyName("slot")] int? Slot,
         [property: JsonPropertyName("result")] string Result,
         [property: JsonPropertyName("why")] string? Why);
+
+    private sealed record DecisionEvent(
+        [property: JsonPropertyName("t")] string T,
+        [property: JsonPropertyName("e")] string E,
+        [property: JsonPropertyName("kind")] string Kind,
+        [property: JsonPropertyName("tile")] int? Tile,
+        [property: JsonPropertyName("call_kind")] string? CallKind,
+        [property: JsonPropertyName("why")] string? Why,
+        [property: JsonPropertyName("steps")] StepDto[]? Steps);
+
+    private sealed record StepDto(
+        [property: JsonPropertyName("k")] string K,
+        [property: JsonPropertyName("d")] string D);
 
     private sealed record SeatDto(
         [property: JsonPropertyName("dc")] int Dc,
