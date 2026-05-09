@@ -208,7 +208,7 @@ public sealed class Plugin : IDalamudPlugin
         // `() => Policy` so the logger always sees the user's currently-active
         // tier (efficiency vs. mcts), even after a SetPolicy switch — Plugin.Policy
         // is mutable and replaced wholesale on tier change.
-        GameLogger = new GameLogger(Aggregator, ConfigService, Log, configDir, () => Policy);
+        GameLogger = new GameLogger(Aggregator, ConfigService, Log, configDir, () => Policy, EventLogger);
         AutoPlay = new AutoPlayLoop(this, Framework, Log, mahjongAddon);
 
         // Discard capture: native asm hook on the discard-write site (verified

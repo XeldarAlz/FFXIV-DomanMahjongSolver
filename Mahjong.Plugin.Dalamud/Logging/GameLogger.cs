@@ -24,10 +24,14 @@ namespace Mahjong.Plugin.Dalamud.Logging;
 ///
 /// Event types (<c>"e"</c> field):
 /// <list type="bullet">
-///   <item><c>hand-start</c> — first event in a file; seat/wind/dealer context.</item>
-///   <item><c>state</c>      — snapshot diff from the aggregator.</item>
-///   <item><c>decision</c>   — policy.Choose() output paired with the state above.</item>
-///   <item><c>action</c>     — our dispatch (discard/call/riichi/tsumo...).</item>
+///   <item><c>hand-start</c>  — first event in a file; seat/wind/dealer context.</item>
+///   <item><c>state</c>       — snapshot diff from the aggregator.</item>
+///   <item><c>decision</c>    — policy.Choose() output paired with the state above.</item>
+///   <item><c>action</c>      — our dispatch (discard/call/riichi/tsumo...).</item>
+///   <item><c>call-prompt</c> — variant-side call-prompt entry: raw AtkValues
+///                              window + decoded candidate tile-ids. Lets us
+///                              diagnose variant-decode mismatches (e.g. the
+///                              chi-claim slot in #34) from telemetry alone.</item>
 /// </list>
 ///
 /// <para><b>Hash-dedup:</b> StateAggregator.Changed fires every framework tick the
@@ -42,7 +46,7 @@ namespace Mahjong.Plugin.Dalamud.Logging;
 /// </summary>
 public sealed class GameLogger : IDisposable
 {
-    public const int SchemaVersion = 1;
+    public const int SchemaVersion = 2;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -55,6 +59,7 @@ public sealed class GameLogger : IDisposable
     private readonly string gamesDir;
     private readonly object writerLock = new();
     private readonly Func<IPolicy>? policyAccessor;
+    private readonly InputEventLogger? eventLogger;
 
     private string? currentPath;
     private int handSeq;
@@ -71,7 +76,8 @@ public sealed class GameLogger : IDisposable
         IConfigService<Configuration> configService,
         IPluginLog log,
         string pluginConfigDir,
-        Func<IPolicy>? policyAccessor = null)
+        Func<IPolicy>? policyAccessor = null,
+        InputEventLogger? eventLogger = null)
     {
         ArgumentNullException.ThrowIfNull(aggregator);
         ArgumentNullException.ThrowIfNull(configService);
@@ -81,9 +87,12 @@ public sealed class GameLogger : IDisposable
         this.configService = configService;
         this.log = log;
         this.policyAccessor = policyAccessor;
+        this.eventLogger = eventLogger;
         gamesDir = Path.Combine(pluginConfigDir, "games");
         Directory.CreateDirectory(gamesDir);
         aggregator.Changed += OnStateChanged;
+        if (eventLogger is not null)
+            eventLogger.CallPromptObserved += OnCallPromptObserved;
     }
 
     public void Dispose()
@@ -92,6 +101,8 @@ public sealed class GameLogger : IDisposable
             return;
         disposed = true;
         aggregator.Changed -= OnStateChanged;
+        if (eventLogger is not null)
+            eventLogger.CallPromptObserved -= OnCallPromptObserved;
     }
 
     private void OnStateChanged(StateSnapshot snap)
@@ -150,6 +161,45 @@ public sealed class GameLogger : IDisposable
         catch (Exception ex)
         {
             log.Error($"GameLogger decision-write error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Record a call-prompt entry. Fires once per CallPrompt-state transition
+    /// the variant detects (deduplicated upstream in BaseEmjVariant). Carries
+    /// the raw AtkValues window the variant decoded from plus the candidate
+    /// tile-ids it produced — divergence between the two is the signature of
+    /// a variant-decode bug, and capturing both inline in the games stream
+    /// means it's reproducible from telemetry alone.
+    ///
+    /// <para>If no hand file is open yet (call prompt before first deal), the
+    /// write is silently dropped — there's no useful corpus context for an
+    /// orphaned prompt frame, and rolling a new file just for one event would
+    /// pollute the per-hand structure.</para>
+    /// </summary>
+    private void OnCallPromptObserved(CallPromptEvent evt)
+    {
+        if (disposed || !configService.Current.EnableGameLogging)
+            return;
+        if (currentPath is null)
+            return;
+        try
+        {
+            var dto = new CallPromptDto(
+                T: evt.ObservedAtUtc.ToString("O", CultureInfo.InvariantCulture),
+                E: "call-prompt",
+                Variant: evt.AddonName,
+                StateCode: evt.StateCode,
+                Flags: evt.Flags,
+                Pon: evt.PonClaimedTileIds,
+                Chi: evt.ChiClaimedTileIds,
+                Kan: evt.KanClaimedTileIds,
+                Av: evt.IntValues);
+            WriteLine(JsonSerializer.Serialize(dto, JsonOpts));
+        }
+        catch (Exception ex)
+        {
+            log.Error($"GameLogger call-prompt-write error: {ex.Message}");
         }
     }
 
@@ -399,4 +449,15 @@ public sealed class GameLogger : IDisposable
         [property: JsonPropertyName("t")] int[] T,
         [property: JsonPropertyName("c")] int? C,
         [property: JsonPropertyName("fs")] int Fs);
+
+    private sealed record CallPromptDto(
+        [property: JsonPropertyName("t")] string T,
+        [property: JsonPropertyName("e")] string E,
+        [property: JsonPropertyName("variant")] string Variant,
+        [property: JsonPropertyName("sc")] int StateCode,
+        [property: JsonPropertyName("flags")] int Flags,
+        [property: JsonPropertyName("pon")] int[] Pon,
+        [property: JsonPropertyName("chi")] int[] Chi,
+        [property: JsonPropertyName("kan")] int[] Kan,
+        [property: JsonPropertyName("av")] int?[] Av);
 }

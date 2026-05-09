@@ -83,6 +83,34 @@ public sealed class InputEventLogger : IDisposable
     /// </summary>
     public event Action<InputCallbackEvent>? CallbackObserved;
 
+    /// <summary>
+    /// Fires once per call-prompt transition observed by a variant — i.e.
+    /// when the addon enters its CallPrompt state code with at least one
+    /// actionable flag (pon/chi/kan/ron/riichi/tsumo). The variant raises
+    /// it from inside <c>TryBuildSnapshot</c> after AtkValues have been
+    /// snapshot to a managed array. Always-on regardless of
+    /// <see cref="Enabled"/>; the diagnostic file write inside the variant
+    /// is the only thing the flag still gates.
+    ///
+    /// <para>GameLogger subscribes and emits a <c>call-prompt</c> NDJSON
+    /// event into the active hand file, so the games stream carries the
+    /// raw AtkValues window alongside the decoded candidate list — that
+    /// pair is what we need to debug variant-decode bugs (e.g. the chi
+    /// claim tile in #34) from uploaded telemetry rather than asking
+    /// users to grab manual captures.</para>
+    /// </summary>
+    public event Action<CallPromptEvent>? CallPromptObserved;
+
+    internal void RaiseCallPrompt(CallPromptEvent evt)
+    {
+        if (CallPromptObserved is not { } observers)
+            return;
+        try
+        { observers(evt); }
+        catch (Exception ex)
+        { log.Error($"CallPromptObserved subscriber error: {ex.Message}"); }
+    }
+
     public unsafe InputEventLogger(
         AddonEmjReader reader,
         MeldTracker meldTracker,
@@ -250,7 +278,7 @@ public sealed class InputEventLogger : IDisposable
         {
             try
             {
-                var ints = SnapshotInts(values, (int)valueCount, max: 16);
+                var ints = SnapshotInts(values, (int)valueCount, max: 24);
                 observers(new InputCallbackEvent(
                     ObservedAtUtc: DateTime.UtcNow,
                     AddonName: addon->NameString,
@@ -464,7 +492,9 @@ public sealed class InputEventLogger : IDisposable
     /// always-on telemetry path. Non-numeric AtkValue types serialize as null
     /// so the subscriber doesn't have to know about AtkValueType at all —
     /// what we care about for input recording is the action opcode + option
-    /// pair, both of which are ints. Strings/floats are dropped intentionally.
+    /// pair (always Int) plus the call-claim slots Doman packs into the
+    /// [16..21] range (chiClaimedTile at 19, pon-duplicate scan range 16..21,
+    /// kanClaimedTile follow-up). Strings/floats are dropped intentionally.
     /// </summary>
     private static unsafe int?[] SnapshotInts(AtkValue* values, int count, int max)
     {
@@ -523,3 +553,22 @@ public sealed record InputCallbackEvent(
     bool Close,
     bool Result,
     int?[] IntValues);
+
+/// <summary>
+/// Managed snapshot of one call-prompt transition observed by a variant —
+/// when the addon enters its CallPrompt state code with at least one
+/// actionable flag (pon/chi/kan/ron/riichi/tsumo). Carries both the raw
+/// AtkValues window the variant decoded *from* and the candidate tile-id
+/// arrays it decoded *to*, so any divergence (e.g. AtkValues[19] holding a
+/// tile id that doesn't match the resulting ChiCandidates entry) is
+/// reconstructible from telemetry alone.
+/// </summary>
+public sealed record CallPromptEvent(
+    DateTime ObservedAtUtc,
+    string AddonName,
+    int StateCode,
+    int Flags,                       // (int)LegalActions.Flags at the prompt
+    int[] PonClaimedTileIds,
+    int[] ChiClaimedTileIds,
+    int[] KanClaimedTileIds,
+    int?[] IntValues);               // [0..N) raw AtkValue ints, capped same as InputCallbackEvent

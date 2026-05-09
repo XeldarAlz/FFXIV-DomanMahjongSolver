@@ -661,7 +661,24 @@ internal sealed class BaseEmjVariant : IEmjVariant
             return;
         lastLoggedCallPromptState = profile.StateCodes.CallPrompt;
 
-        if (!ctx.EventLogger.Enabled || atkValues == null)
+        if (atkValues == null)
+            return;
+
+        // Always-on managed event: snapshot AtkValues + decoded candidates and
+        // fire so GameLogger ships them via the games stream. The diagnostic
+        // file write below stays gated on EventLogger.Enabled (verbose RE log).
+        var ints = SnapshotAtkInts(atkValues, atkCount, max: 24);
+        ctx.EventLogger.RaiseCallPrompt(new CallPromptEvent(
+            ObservedAtUtc: DateTime.UtcNow,
+            AddonName: Name,
+            StateCode: stateCode,
+            Flags: (int)legal.Flags,
+            PonClaimedTileIds: ExtractClaimedTileIds(legal.PonCandidates),
+            ChiClaimedTileIds: ExtractClaimedTileIds(legal.ChiCandidates),
+            KanClaimedTileIds: ExtractClaimedTileIds(legal.KanCandidates),
+            IntValues: ints));
+
+        if (!ctx.EventLogger.Enabled)
             return;
 
         try
@@ -687,6 +704,36 @@ internal sealed class BaseEmjVariant : IEmjVariant
         {
             log.Error($"call-prompt diagnostic log error: {ex.Message}");
         }
+    }
+
+    private static unsafe int?[] SnapshotAtkInts(AtkValue* values, int count, int max)
+    {
+        if (values == null || count <= 0)
+            return Array.Empty<int?>();
+        int n = Math.Min(count, max);
+        var result = new int?[n];
+        for (int i = 0; i < n; i++)
+        {
+            var v = values[i];
+            result[i] = v.Type switch
+            {
+                ValueType.Int => v.Int,
+                ValueType.UInt => unchecked((int)v.UInt),
+                ValueType.Bool => v.Byte != 0 ? 1 : 0,
+                _ => (int?)null,
+            };
+        }
+        return result;
+    }
+
+    private static int[] ExtractClaimedTileIds(IReadOnlyList<MeldCandidate> candidates)
+    {
+        if (candidates.Count == 0)
+            return Array.Empty<int>();
+        var ids = new int[candidates.Count];
+        for (int i = 0; i < candidates.Count; i++)
+            ids[i] = candidates[i].ClaimedTile.Id;
+        return ids;
     }
 
     private static unsafe void AppendAtkValue(System.Text.StringBuilder sb, AtkValue v, int i)
