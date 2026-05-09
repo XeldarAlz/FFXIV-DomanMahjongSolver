@@ -347,10 +347,7 @@ public sealed class AutoPlayLoop : IDisposable
     {
         var legal = snap.Legal;
 
-        // Riichi popup: policy.Choose returns Pass because its Riichi branch
-        // lives in the discard flow. If Riichi is offered on its own, we accept
-        // — the user already committed by the time the popup appears.
-        bool acceptRiichiPopup = choice.Kind == ActionKind.Pass && legal.Can(ActionFlags.Riichi);
+        bool acceptRiichiPopup = ResolveRiichiPopupAcceptance(snap, choice, out var riichiReason);
 
         bool shouldAccept = acceptRiichiPopup || choice.Kind is
             ActionKind.Ron or ActionKind.Tsumo or
@@ -358,14 +355,63 @@ public sealed class AutoPlayLoop : IDisposable
             ActionKind.MinKan or ActionKind.ShouMinKan;
 
         if (shouldAccept)
-            DispatchAccept(choice, legal, acceptRiichiPopup);
+            DispatchAccept(choice, legal, acceptRiichiPopup, riichiReason!);
         else
-            DispatchPass(choice, legal);
+            DispatchPass(choice, legal, riichiReason);
 
         log.Info($"[AutoPlayLoop] call-prompt dispatch: {LastActionDescription}");
     }
 
-    private void DispatchAccept(ActionChoice choice, LegalActions legal, bool acceptRiichiPopup)
+    /// <summary>
+    /// Decide whether the loop should click "Riichi" on a Riichi-bearing call
+    /// prompt. Three branches:
+    /// <list type="bullet">
+    ///   <item>Policy didn't return Pass, or Riichi isn't on offer: not our concern.</item>
+    ///   <item>Riichi-confirm latch already set, or hand sits at a draw-pending count
+    ///         (% 3 != 2): this is the post-click yaku-preview popup; auto-accept since
+    ///         the user already committed during the initial popup.</item>
+    ///   <item>Otherwise (initial popup with a 14/11/8-tile hand): re-run the policy
+    ///         against a synthetic Discard|Riichi snapshot so <c>RiichiPolicy.Evaluate</c>
+    ///         actually fires. The standard call branch in <c>EfficiencyPolicy.Choose</c>
+    ///         skips it because <c>HasCallOffered</c> ignores Riichi, which let every
+    ///         offered Riichi auto-accept regardless of wait quality, wall remaining, or
+    ///         push/fold — the cause of the late-thin-riichi deal-ins observed
+    ///         2026-05-09.</item>
+    /// </list>
+    /// </summary>
+    private bool ResolveRiichiPopupAcceptance(StateSnapshot snap, ActionChoice choice, out string? probeReason)
+    {
+        probeReason = null;
+        if (choice.Kind != ActionKind.Pass || !snap.Legal.Can(ActionFlags.Riichi))
+            return false;
+
+        if (fsm.IsRiichiConfirmPending || snap.Hand.Count == 0 || snap.Hand.Count % 3 != 2)
+        {
+            probeReason = "riichi-confirm";
+            return true;
+        }
+
+        var probe = snap with
+        {
+            Legal = snap.Legal with
+            {
+                Flags = ActionFlags.Discard | ActionFlags.Riichi,
+            },
+        };
+        var verdict = plugin.Policy.Choose(probe);
+        if (verdict.Kind != ActionKind.Riichi)
+        {
+            probeReason = string.IsNullOrEmpty(verdict.Reasoning)
+                ? "riichi declined by policy"
+                : $"riichi declined: {verdict.Reasoning}";
+            return false;
+        }
+
+        probeReason = string.IsNullOrEmpty(verdict.Reasoning) ? "riichi-accept" : verdict.Reasoning;
+        return true;
+    }
+
+    private void DispatchAccept(ActionChoice choice, LegalActions legal, bool acceptRiichiPopup, string riichiReason)
     {
         var result = plugin.Dispatcher.DispatchCall();
         string label = acceptRiichiPopup ? "riichi-confirm" : choice.Kind.ToString().ToLowerInvariant();
@@ -373,7 +419,7 @@ public sealed class AutoPlayLoop : IDisposable
         var loggedKind = acceptRiichiPopup ? ActionKind.Riichi : choice.Kind;
         plugin.GameLogger.RecordAction(
             loggedKind, null, null, result.ToString(),
-            acceptRiichiPopup ? "riichi-confirm" : choice.Reasoning);
+            acceptRiichiPopup ? riichiReason : choice.Reasoning);
 
         // Latch on for the post-riichi-confirm popup: the yaku-preview confirm
         // popup shares the Riichi-flag signature of the initial popup, so
@@ -382,7 +428,7 @@ public sealed class AutoPlayLoop : IDisposable
             fsm.LatchRiichiConfirm();
     }
 
-    private void DispatchPass(ActionChoice choice, LegalActions legal)
+    private void DispatchPass(ActionChoice choice, LegalActions legal, string? reasonOverride = null)
     {
         // Pass is always the rightmost button: its option index equals the
         // number of accept buttons shown. Multi-chi adds extra accept slots
@@ -390,7 +436,8 @@ public sealed class AutoPlayLoop : IDisposable
         int passIndex = ComputePassIndex(legal);
         var result = plugin.Dispatcher.DispatchCallOption(passIndex);
         LastActionDescription = $"auto-pass[opt={passIndex}] → {result}";
-        plugin.GameLogger.RecordAction(ActionKind.Pass, null, passIndex, result.ToString(), choice.Reasoning);
+        string reasoning = string.IsNullOrEmpty(reasonOverride) ? choice.Reasoning : reasonOverride;
+        plugin.GameLogger.RecordAction(ActionKind.Pass, null, passIndex, result.ToString(), reasoning);
     }
 
     private static int ComputePassIndex(LegalActions legal)
