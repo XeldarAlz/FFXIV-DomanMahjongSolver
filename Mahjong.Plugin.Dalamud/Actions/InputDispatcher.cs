@@ -81,10 +81,13 @@ public sealed class InputDispatcher
     private static unsafe bool IsListWidgetPopupActive(AtkUnitBase* unit)
     {
         var host = unit->GetNodeById(104);
-        if (host == null || (int)host->Type < 1000) return false;
-        if (!host->IsVisible()) return false;
+        if (host == null || (int)host->Type < 1000)
+            return false;
+        if (!host->IsVisible())
+            return false;
         var hostComp = ((AtkComponentNode*)host)->Component;
-        if (hostComp == null) return false;
+        if (hostComp == null)
+            return false;
         var shell = hostComp->GetNodeById(3);
         return shell != null && (int)shell->Type == 1030;
     }
