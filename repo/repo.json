@@ -25,7 +25,7 @@
     "Punchline": "Doman Mahjong helper — hints or auto-play.",
     "Description": "This plugin is in alpha — expect bugs. Please report any you find, and if you'd like to contribute, join in!\n\nA helper for Doman Mahjong at the Gold Saucer. Two modes:\n\n• Hint mode (default): shows the best tile to discard and a short explanation. You still click every move.\n• Auto-play: the plugin watches the table and clicks for you with natural pacing.\n\nStarts off by default. You must accept a short notice before auto-play can be turned on, and you can switch back to hints or turn it off at any time from the plugin window.",
     "Changelog": "v0.1.0.0 — Architectural overhaul. Renamed plugin internal name (DomanMahjongAI → Mahjong.Plugin.Dalamud) — first launch will start with a fresh config; reaccept the ToS notice and re-arm whichever mode you want. Engine, policy, and rules layers split out as standalone projects. Native discard-capture hook gains an addon-poll fallback for clients where the sigscan misses. Heavily tested: 521 unit tests across the libraries and plugin shell.",
-    "DownloadCount": 406,
+    "DownloadCount": 470,
     "LastUpdate": 0,
     "DownloadLinkInstall": "https://github.com/XeldarAlz/FFXIV-DomanMahjongSolver/releases/latest/download/latest.zip",
     "DownloadLinkTesting": "https://github.com/XeldarAlz/FFXIV-DomanMahjongSolver/releases/latest/download/latest.zip",
