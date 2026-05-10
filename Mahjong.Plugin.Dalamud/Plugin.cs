@@ -247,8 +247,19 @@ public sealed class Plugin : IDalamudPlugin
             AddonReader, SeatPoolRegistry, ErrorSink, configDir);
 
         // Snapshot every state change. Hash-dedup inside the recorder
-        // collapses identical layouts so this is cheap on quiet ticks.
+        // collapses identical layouts so this is cheap on quiet ticks; the
+        // atk_count gate inside Record drops idle-cadence captures.
         Aggregator.Changed += _ => MemoryDumpRecorder.Record("state-change");
+
+        // Bracket every Mahjong-addon FireCallback with a (pre, post) memdump
+        // pair so the offline RE pipeline (tools/find-discard-offset.mjs et al)
+        // can diff addon bytes that mutate in lockstep with a single click.
+        // Both reasons bypass the atk_count gate inside Record because the
+        // gate applies only to "state-change". The pre event reads addon
+        // state synchronously before the original FireCallback runs, so the
+        // captured bytes still reflect pre-mutation memory.
+        EventLogger.BeforeFireCallback += _ => MemoryDumpRecorder.Record("input-pre");
+        EventLogger.CallbackObserved += _ => MemoryDumpRecorder.Record("input-post");
 
         MainWindow = new MainWindow(this);
         AboutWindow = new AboutWindow(Log);

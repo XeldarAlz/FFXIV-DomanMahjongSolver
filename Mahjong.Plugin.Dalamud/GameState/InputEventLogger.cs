@@ -84,6 +84,21 @@ public sealed class InputEventLogger : IDisposable
     public event Action<InputCallbackEvent>? CallbackObserved;
 
     /// <summary>
+    /// Fires once per FireCallback the Mahjong addon receives, BEFORE the
+    /// original game callback runs. Carries only the addon name — addon
+    /// state is still pre-mutation when the event fires, so subscribers
+    /// (e.g. <see cref="Telemetry.MemoryDumpRecorder"/>) can read the live
+    /// addon directly to capture at-click context. Always-on regardless of
+    /// <see cref="Enabled"/>.
+    ///
+    /// <para>Paired with <see cref="CallbackObserved"/>: a subscriber
+    /// recording on both gets a clean (pre, post) bracket around every
+    /// click for offline diff analysis. We use this in RE sessions to find
+    /// addon byte offsets that mutate in lockstep with discard count etc.</para>
+    /// </summary>
+    public event Action<string>? BeforeFireCallback;
+
+    /// <summary>
     /// Fires once per call-prompt transition observed by a variant — i.e.
     /// when the addon enters its CallPrompt state code with at least one
     /// actionable flag (pon/chi/kan/ron/riichi/tsumo). The variant raises
@@ -250,6 +265,19 @@ public sealed class InputEventLogger : IDisposable
             var preSnap = reader.TryBuildSnapshot();
             if (preSnap is not null && preSnap.Hand.Count > 0)
                 captureHand = Tiles.Render(preSnap.Hand);
+        }
+
+        // Fire the pre-original event for Mahjong-addon callbacks. Subscribers
+        // (memdump recorder during RE sessions) read addon state synchronously
+        // here, so it still reflects pre-click memory. Wrapped in try so a
+        // misbehaving subscriber can never block the original FireCallback.
+        if (BeforeFireCallback is { } preObservers
+            && addon != null && MahjongAddon.IsMahjongAddon(addon->NameString))
+        {
+            try
+            { preObservers(addon->NameString); }
+            catch (Exception ex)
+            { log.Error($"BeforeFireCallback subscriber error: {ex.Message}"); }
         }
 
         // Always call the original FIRST so game logic is unaffected regardless of logger state.

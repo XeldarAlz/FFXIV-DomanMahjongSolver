@@ -114,11 +114,19 @@ public sealed class MemoryDumpRecorder : IDisposable
     public void Dispose() => disposed = true;
 
     /// <summary>
-    /// Capture a snapshot tagged with <paramref name="reason"/> (e.g.
-    /// <c>"state-change"</c>, <c>"pre-discard"</c>, <c>"post-call"</c>).
-    /// Safe to call from any thread; the heavy work (memcpy + hashing +
-    /// JSON serialize) runs on the calling thread, and bad-pointer reads
-    /// are caught and surfaced through the error sink.
+    /// Capture a snapshot tagged with <paramref name="reason"/>. Standard
+    /// reasons are <c>"state-change"</c> (the high-frequency cadence,
+    /// gated on <c>AtkValuesCount</c>) and the input-bracket pair
+    /// <c>"input-pre"</c> / <c>"input-post"</c> (fired around every
+    /// FireCallback against the Mahjong addon — used during RE sessions to
+    /// diff addon bytes that mutate in lockstep with click-driven
+    /// state). Pre/post captures bypass the atk_count gate so we never
+    /// miss the bracketing snapshots.
+    ///
+    /// <para>Safe to call from any thread; the heavy work (memcpy +
+    /// hashing + JSON serialize) runs on the calling thread, and
+    /// bad-pointer reads are caught and surfaced through the error
+    /// sink.</para>
     /// </summary>
     public unsafe void Record(string reason)
     {
@@ -134,20 +142,27 @@ public sealed class MemoryDumpRecorder : IDisposable
             var unit = (AtkUnitBase*)obs.Address;
 
             // Gate the high-frequency state-change cadence on AtkValuesCount.
-            // Other reasons (pre-discard / post-call from action dispatchers)
-            // are coarse, rare, and useful even mid-transition — let them
-            // through unconditionally so we never miss a labeled pair.
-            if (reason == "state-change" && unit->AtkValuesCount < MinAtkValuesForStateChangeDump)
+            // Other reasons (input-pre / input-post bracketing FireCallback
+            // events) are coarse, rare, and useful even mid-transition — let
+            // them through unconditionally so we never miss a labeled pair.
+            bool isStateChange = reason == "state-change";
+            if (isStateChange && unit->AtkValuesCount < MinAtkValuesForStateChangeDump)
                 return;
 
             var entry = BuildEntry(reason, unit);
 
-            // Hash-dedup: identical-bytes snapshot shouldn't ship twice
-            // per session. The hash spans every byte payload — if any
-            // tile moves, the hash changes and we re-emit.
-            if (seenHashes.Contains(entry.Hash))
-                return;
-            seenHashes.Add(entry.Hash);
+            // Hash-dedup the high-frequency state-change cadence so the same
+            // byte layout doesn't ship twice per session. Explicit-reason
+            // dumps (input-pre / input-post and any future tagged reasons)
+            // skip dedup: the value of those captures is precisely the
+            // (reason, t, hash) tuple — collapsing two clicks that happened
+            // to land on the same memory layout would defeat the bracket.
+            if (isStateChange)
+            {
+                if (seenHashes.Contains(entry.Hash))
+                    return;
+                seenHashes.Add(entry.Hash);
+            }
 
             WriteEntry(entry);
         }
