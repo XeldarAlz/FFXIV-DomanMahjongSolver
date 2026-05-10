@@ -16,3 +16,9 @@ reflect.txt
 .wrangler/
 server/node_modules/
 server/dist/
+
+# Local-only working area: pulled telemetry corpora, analysis artifacts,
+# anything containing other users' install IDs or addon memory blobs.
+# Never commit — install IDs identify a single install across sessions and
+# memory blobs can carry player-name strings.
+.local/
