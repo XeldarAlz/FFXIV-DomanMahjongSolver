@@ -43,7 +43,9 @@ public sealed class NativeAsmDiscardCapture : IDiscardCapture
     // Distinctive 20 bytes spanning the inc + load + store sequence inside
     // the discard handler. inc is 7 bytes, the [rbp+0x90] load is 6, the
     // [r14+0x1004] store is 7 — totaling 20 bytes the AOB scanner matches on.
-    private const string DiscardSig =
+    // Public so <see cref="SigscanProbe"/> can probe the same pattern without
+    // instantiating the full asm-hook strategy.
+    public const string DiscardSig =
         "41 FF 86 00 10 00 00 8B 85 90 00 00 00 41 89 86 04 10 00 00";
 
     // Ring buffer layout (in unmanaged memory):
