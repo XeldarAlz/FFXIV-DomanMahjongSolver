@@ -53,7 +53,7 @@ public sealed class GameLogger : IDisposable
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
-    private readonly StateAggregator aggregator;
+    private readonly StateAggregator? aggregator;
     private readonly IConfigService<Configuration> configService;
     private readonly IPluginLog log;
     private readonly string gamesDir;
@@ -95,17 +95,41 @@ public sealed class GameLogger : IDisposable
             eventLogger.CallPromptObserved += OnCallPromptObserved;
     }
 
+    /// <summary>
+    /// Test-only constructor: skips the aggregator wiring so unit tests can
+    /// drive <see cref="OnStateChanged"/> directly without standing up a real
+    /// <see cref="StateAggregator"/> (which transitively needs an addon
+    /// reader, framework, and addon-lifecycle service).
+    /// </summary>
+    internal GameLogger(
+        IConfigService<Configuration> configService,
+        IPluginLog log,
+        string pluginConfigDir)
+    {
+        ArgumentNullException.ThrowIfNull(configService);
+        ArgumentNullException.ThrowIfNull(log);
+        ArgumentException.ThrowIfNullOrEmpty(pluginConfigDir);
+        this.aggregator = null;
+        this.configService = configService;
+        this.log = log;
+        this.policyAccessor = null;
+        this.eventLogger = null;
+        gamesDir = Path.Combine(pluginConfigDir, "games");
+        Directory.CreateDirectory(gamesDir);
+    }
+
     public void Dispose()
     {
         if (disposed)
             return;
         disposed = true;
-        aggregator.Changed -= OnStateChanged;
+        if (aggregator is not null)
+            aggregator.Changed -= OnStateChanged;
         if (eventLogger is not null)
             eventLogger.CallPromptObserved -= OnCallPromptObserved;
     }
 
-    private void OnStateChanged(StateSnapshot snap)
+    internal void OnStateChanged(StateSnapshot snap)
     {
         if (!configService.Current.EnableGameLogging)
             return;
