@@ -17,7 +17,9 @@ namespace Mahjong.Plugin.Dalamud.Tests;
 /// </summary>
 public class GameLoggerDedupTests
 {
-    private static StateSnapshot SampleSnap(int wallRemaining, int handCount = 0)
+    private static readonly int[] StartScores = [25000, 25000, 25000, 25000];
+
+    private static StateSnapshot SampleSnap(int wallRemaining, int handCount = 0, int[]? scores = null)
     {
         var seats = new SeatView[4];
         for (int i = 0; i < 4; i++)
@@ -37,6 +39,7 @@ public class GameLoggerDedupTests
             WallRemaining = wallRemaining,
             Seats = seats,
             Hand = hand,
+            Scores = scores ?? StartScores,
         };
     }
 
@@ -112,6 +115,58 @@ public class GameLoggerDedupTests
 
         var files = Directory.GetFiles(logger.GamesDir, "game-*.ndjson");
         Assert.Equal(2, files.Length);
+    }
+
+    /// <summary>
+    /// Each closed hand file ends with a hand-end carrying the cumulative score
+    /// delta from that file's hand-start. Without this the corpus has decisions
+    /// but no reward signal; policy training has nothing to score against.
+    /// </summary>
+    [Fact]
+    public void Hand_roll_emits_hand_end_with_score_delta_to_previous_file()
+    {
+        using var tmp = new TempDir();
+        var config = new DalamudConfigService(_ => { }, new Configuration());
+        using var logger = new GameLogger(config, new StubPluginLog(), tmp.Path);
+
+        // Hand 1: tsumo by seat 0. Player gains 8000 from 3 losers paying.
+        logger.OnStateChanged(SampleSnap(70, handCount: 14, scores: [25000, 25000, 25000, 25000]));
+        logger.OnStateChanged(SampleSnap(40, handCount: 14, scores: [25000, 25000, 25000, 25000]));
+        // Hand 2 deal — the prior hand's resolution is reflected in the new scores.
+        logger.OnStateChanged(SampleSnap(70, handCount: 14, scores: [33000, 23000, 21000, 23000]));
+
+        var files = Directory.GetFiles(logger.GamesDir, "game-*.ndjson").OrderBy(p => p).ToArray();
+        Assert.Equal(2, files.Length);
+
+        var hand1 = File.ReadAllLines(files[0]);
+        // The closing event of hand 1 is the hand-end we emitted.
+        Assert.Contains("\"e\":\"hand-end\"", hand1[^1]);
+        Assert.Contains("\"kind\":\"tsumo\"", hand1[^1]);
+        Assert.Contains("\"winner\":0", hand1[^1]);
+        Assert.Contains("\"deltas\":[8000,-2000,-4000,-2000]", hand1[^1]);
+        Assert.Contains("\"scores_after\":[33000,23000,21000,23000]", hand1[^1]);
+
+        // Hand 2 file starts cleanly with hand-start; no leaked hand-end.
+        var hand2 = File.ReadAllLines(files[1]);
+        Assert.Contains("\"e\":\"hand-start\"", hand2[0]);
+        Assert.DoesNotContain(hand2, l => l.Contains("\"e\":\"hand-end\""));
+    }
+
+    [Theory]
+    // tsumo: 1 winner, 3 losers.
+    [InlineData(new[] { 8000, -2000, -4000, -2000 }, "tsumo", 0,    (object?)null)]
+    // ron: 1 winner takes from a single discarder; two seats untouched.
+    [InlineData(new[] { 0, 5200, 0, -5200 },        "ron",   1,    3)]
+    // exhaustive draw, 2 tenpai vs 2 noten: 1500 each way.
+    [InlineData(new[] { 1500, -1500, 1500, -1500 }, "draw",  (object?)null, (object?)null)]
+    // no-change draw (abortive / chombo edge cases): all zero.
+    [InlineData(new[] { 0, 0, 0, 0 },                "draw",  (object?)null, (object?)null)]
+    public void InferResultKind_classifies_delta_shapes(int[] deltas, string expectedKind, object? expectedWinner, object? expectedLoser)
+    {
+        var (kind, winner, loser) = GameLogger.InferResultKind(deltas);
+        Assert.Equal(expectedKind, kind);
+        Assert.Equal((int?)expectedWinner, winner);
+        Assert.Equal((int?)expectedLoser, loser);
     }
 
     [Fact]

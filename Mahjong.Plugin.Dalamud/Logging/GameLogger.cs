@@ -32,6 +32,14 @@ namespace Mahjong.Plugin.Dalamud.Logging;
 ///                              window + decoded candidate tile-ids. Lets us
 ///                              diagnose variant-decode mismatches (e.g. the
 ///                              chi-claim slot in #34) from telemetry alone.</item>
+///   <item><c>hand-end</c>    — final event in a file: cumulative score delta
+///                              vs the file's hand-start, inferred result kind
+///                              (tsumo/ron/draw), winner/loser seats. Provides
+///                              the reward signal for policy training; without
+///                              this the corpus has decisions but no outcomes.
+///                              The very last hand of a session is not emitted
+///                              (we only detect end-of-hand from the start of
+///                              the next one).</item>
 /// </list>
 ///
 /// <para><b>Hash-dedup:</b> StateAggregator.Changed fires every framework tick the
@@ -65,6 +73,7 @@ public sealed class GameLogger : IDisposable
     private int handSeq;
     private int lastWall = -1;
     private int? lastStateHash;
+    private int[]? lastHandStartScores;
     private bool disposed;
 
     public string? CurrentPath => currentPath;
@@ -280,7 +289,15 @@ public sealed class GameLogger : IDisposable
         if (wallJumpUp && snap.Hand.Count != 0 && snap.Hand.Count != 13 && snap.Hand.Count != 14)
             return;
 
+        // Close out the previous file with a hand-end carrying the just-resolved
+        // hand's cumulative score delta. Emitted to currentPath BEFORE RollWriter
+        // advances it, so the event lands in the old file.
+        if (!firstRoll && lastHandStartScores is not null)
+            EmitHandEnd(lastHandStartScores, snap.Scores);
+
         RollWriter();
+        var startScores = snap.Scores.ToArray();
+        lastHandStartScores = startScores;
         var start = new HandStartEvent(
             T: Now(),
             E: "hand-start",
@@ -290,8 +307,67 @@ public sealed class GameLogger : IDisposable
             Dealer: snap.DealerSeat,
             Honba: snap.Honba,
             RiichiSticks: snap.RiichiSticks,
-            Scores: snap.Scores.ToArray());
+            Scores: startScores);
         WriteLine(JsonSerializer.Serialize(start, JsonOpts));
+    }
+
+    private void EmitHandEnd(IReadOnlyList<int> scoresBefore, IReadOnlyList<int> scoresAfter)
+    {
+        int n = Math.Min(scoresBefore.Count, scoresAfter.Count);
+        var deltas = new int[n];
+        for (int i = 0; i < n; i++)
+            deltas[i] = scoresAfter[i] - scoresBefore[i];
+        var (kind, winner, loser) = InferResultKind(deltas);
+        var evt = new HandEndEvent(
+            T: Now(),
+            E: "hand-end",
+            Kind: kind,
+            Winner: winner,
+            Loser: loser,
+            Deltas: deltas,
+            ScoresAfter: scoresAfter.ToArray());
+        try { WriteLine(JsonSerializer.Serialize(evt, JsonOpts)); }
+        catch (Exception ex) { log.Error($"GameLogger hand-end-write error: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Best-effort classification from the per-seat delta shape. Three buckets:
+    /// <list type="bullet">
+    ///   <item><c>ron</c>   — exactly one positive Δ and exactly one negative Δ
+    ///                        (winner takes from a single discarder).</item>
+    ///   <item><c>tsumo</c> — exactly one positive Δ and three negative Δ
+    ///                        (winner takes from all three losers).</item>
+    ///   <item><c>draw</c>  — anything else: exhaustive-draw tenpai
+    ///                        redistribution, abortive draws with no payout,
+    ///                        zero-delta edge cases, double-ron (multiple
+    ///                        winners), etc. Downstream analysis can sub-classify
+    ///                        from the raw deltas.</item>
+    /// </list>
+    /// Riichi-stick movements within the hand are naturally absorbed: the delta
+    /// is computed from one hand-start to the next, so the −1000 stick deposit
+    /// and the sticks-to-winner payout cancel for whoever ultimately wins.
+    /// </summary>
+    internal static (string kind, int? winner, int? loser) InferResultKind(int[] deltas)
+    {
+        int pos = 0, neg = 0;
+        int winnerIdx = -1, loserIdx = -1;
+        int maxPos = 0, minNeg = 0;
+        for (int i = 0; i < deltas.Length; i++)
+        {
+            if (deltas[i] > 0)
+            {
+                pos++;
+                if (deltas[i] > maxPos) { maxPos = deltas[i]; winnerIdx = i; }
+            }
+            else if (deltas[i] < 0)
+            {
+                neg++;
+                if (deltas[i] < minNeg) { minNeg = deltas[i]; loserIdx = i; }
+            }
+        }
+        if (pos == 1 && neg == 1) return ("ron",   winnerIdx, loserIdx);
+        if (pos == 1 && neg == 3) return ("tsumo", winnerIdx, null);
+        return ("draw", null, null);
     }
 
     private void RollWriter()
@@ -436,6 +512,15 @@ public sealed class GameLogger : IDisposable
         [property: JsonPropertyName("honba")] int Honba,
         [property: JsonPropertyName("riichi_sticks")] int RiichiSticks,
         [property: JsonPropertyName("scores")] int[] Scores);
+
+    private sealed record HandEndEvent(
+        [property: JsonPropertyName("t")] string T,
+        [property: JsonPropertyName("e")] string E,
+        [property: JsonPropertyName("kind")] string Kind,
+        [property: JsonPropertyName("winner")] int? Winner,
+        [property: JsonPropertyName("loser")] int? Loser,
+        [property: JsonPropertyName("deltas")] int[] Deltas,
+        [property: JsonPropertyName("scores_after")] int[] ScoresAfter);
 
     private sealed record StateEvent(
         [property: JsonPropertyName("t")] string T,
