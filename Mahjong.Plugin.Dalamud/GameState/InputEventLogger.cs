@@ -34,7 +34,6 @@ public sealed class InputEventLogger : IDisposable
     private const double CaptureTimeoutSeconds = 60.0;
 
     private readonly AddonEmjReader reader;
-    private readonly MeldTracker meldTracker;
     private readonly IAddonLifecycle addonLifecycle;
     private readonly IGameInteropProvider gameInterop;
     private readonly IPluginLog log;
@@ -128,7 +127,6 @@ public sealed class InputEventLogger : IDisposable
 
     public unsafe InputEventLogger(
         AddonEmjReader reader,
-        MeldTracker meldTracker,
         IAddonLifecycle addonLifecycle,
         IGameInteropProvider gameInterop,
         IPluginLog log,
@@ -136,14 +134,12 @@ public sealed class InputEventLogger : IDisposable
         string pluginConfigDir)
     {
         ArgumentNullException.ThrowIfNull(reader);
-        ArgumentNullException.ThrowIfNull(meldTracker);
         ArgumentNullException.ThrowIfNull(addonLifecycle);
         ArgumentNullException.ThrowIfNull(gameInterop);
         ArgumentNullException.ThrowIfNull(log);
         ArgumentNullException.ThrowIfNull(addon);
         ArgumentException.ThrowIfNullOrEmpty(pluginConfigDir);
         this.reader = reader;
-        this.meldTracker = meldTracker;
         this.addonLifecycle = addonLifecycle;
         this.gameInterop = gameInterop;
         this.log = log;
@@ -220,30 +216,13 @@ public sealed class InputEventLogger : IDisposable
 
     private unsafe bool FireCallbackDetour(AtkUnitBase* addon, uint valueCount, AtkValue* values, byte close)
     {
-        // Determine meld-accept intent BEFORE the game processes the click so the Legal
-        // snapshot still reflects the offered candidates. opcode 11 + option 0 = accept
-        // leftmost button on a call prompt (pon / chi / min-kan). For multi-variant chi
-        // we'd want the specific variant picked but the game only ever takes option 0
-        // from us today (matches what DispatchCall() sends).
-        MeldCandidate? acceptedMeld = null;
-        if (addon != null && MahjongAddon.IsMahjongAddon(addon->NameString)
-            && valueCount == 2
-            && values[0].Type == FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int
-            && values[0].Int == 11
-            && values[1].Type == FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int
-            && values[1].Int == 0)
-        {
-            var preSnap = reader.TryBuildSnapshot();
-            if (preSnap is not null)
-            {
-                if (preSnap.Legal.PonCandidates.Count > 0)
-                    acceptedMeld = preSnap.Legal.PonCandidates[0];
-                else if (preSnap.Legal.ChiCandidates.Count > 0)
-                    acceptedMeld = preSnap.Legal.ChiCandidates[0];
-                else if (preSnap.Legal.KanCandidates.Count > 0)
-                    acceptedMeld = preSnap.Legal.KanCandidates[0];
-            }
-        }
+        // Meld recording is no longer driven from FireCallback. The earlier
+        // opcode-11/option-0 + Legal.{Pon,Chi,Kan}Candidates[0] heuristic missed
+        // multi-variant chi, pon+chi simultaneous prompts, state-28 list-widget
+        // chi, and #34's wrong-tile-id-at-AtkValues[19] case. MeldTracker now
+        // infers melds from closed-hand deltas inside the snapshot reader
+        // (BaseEmjVariant.BuildSnapshot → MeldTracker.ObserveSnapshot), which
+        // is variant-agnostic and click-payload-agnostic.
 
         // Capture snapshot — must run BEFORE the original FireCallback. The original may
         // mutate addon state (close a modal, refresh AtkValues), so reading post-call
@@ -282,21 +261,6 @@ public sealed class InputEventLogger : IDisposable
 
         // Always call the original FIRST so game logic is unaffected regardless of logger state.
         bool result = fireCallbackHook!.Original(addon, valueCount, values, close);
-
-        // Record the meld on every opcode-11/option-0 dispatch, not gated on result.
-        // FireCallback returns false for this opcode even when the game accepts the
-        // click (verified by capturing manual in-game pon/chi/riichi presses — all
-        // logged result=False despite the calls actually firing). Gating on result
-        // here desynced MeldTracker from reality: after every pon, closed-hand ran
-        // 3 tiles ahead of what we'd recorded, and AutoPlayLoop's % 3 == 2 discard
-        // check eventually rejected our turn as "not a discard state" — the real
-        // root cause of the "plays 1-2 rounds then freezes" report in #9.
-        if (acceptedMeld is { } meld)
-        {
-            try
-            { meldTracker.Record(Meld.FromAcceptedCandidate(meld)); }
-            catch (Exception ex) { log.Error($"MeldTracker record error: {ex.Message}"); }
-        }
 
         // Always-on managed event for telemetry subscribers (InputRecorder ships
         // these to the inputs/ stream). Snapshot int values now so the subscriber

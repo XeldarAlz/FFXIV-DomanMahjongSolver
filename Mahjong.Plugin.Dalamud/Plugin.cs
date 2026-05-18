@@ -112,7 +112,7 @@ public sealed class Plugin : IDalamudPlugin
     public InputRecorder InputRecorder { get; }
 
     private readonly System.Net.Http.HttpClient telemetryHttp;
-    private MirroredPluginLog mirroredLog = null!;
+    private readonly MirroredPluginLog mirroredLog = null!;
 
     private readonly MjAutoCommand command;
 
@@ -202,7 +202,7 @@ public sealed class Plugin : IDalamudPlugin
             AddonLifecycle, Log, mahjongAddon, MeldTracker, configDir, layoutsDir, FindingsLog);
         Aggregator = new StateAggregator(AddonReader, Framework);
         EventLogger = new InputEventLogger(
-            AddonReader, MeldTracker, AddonLifecycle, GameInterop, Log, mahjongAddon, configDir);
+            AddonReader, AddonLifecycle, GameInterop, Log, mahjongAddon, configDir);
         AddonReader.EventLogger = EventLogger;
         InputRecorder = new InputRecorder(EventLogger, configDir);
         // `() => Policy` so the logger always sees the user's currently-active

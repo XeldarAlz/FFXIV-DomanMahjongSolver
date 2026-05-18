@@ -115,13 +115,12 @@ internal sealed class BaseEmjVariant : IEmjVariant
         MaybeLogMeldTransition(ctx, addr, stateCode, hand);
 
         // Resolve our own open melds. The addon's on-disk meld struct is still
-        // un-mapped; instead the MeldTracker captures each meld when the auto-play
-        // (or hooked manual click) accepts a call prompt. Reset the tracker on
-        // wall jump up — same hand-transition signal GameLogger uses, and
-        // robust against the post-call window where the addon's hand-array
-        // briefly still reads pre-call (which would falsely fire a closed-hand
-        // -based reset and erase the meld we just recorded).
+        // un-mapped; instead the MeldTracker infers each meld from closed-hand
+        // deltas observed tick-by-tick. ObserveSnapshot runs the inference
+        // before we read Melds so a meld that just landed this tick is
+        // already in the list. ObserveWall provides the hand-boundary reset.
         ctx.MeldTracker.ObserveWall(wallRemaining);
+        ctx.MeldTracker.ObserveSnapshot(hand, discardCounts, ourSeat: 0);
         var ourMelds = ctx.MeldTracker.Melds.ToArray();
 
         return StateSnapshot.Empty with
