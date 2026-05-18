@@ -300,4 +300,28 @@ public class MeldTrackerTests
         var inferred = tracker.ObserveSnapshot(Hand("123m789p1234567z"), [0, 0, 1, 0], ourSeat: 2);
         Assert.Null(inferred);
     }
+
+    [Fact]
+    public void ObserveSnapshot_with_unknown_seat_minus_one_skips_inference()
+    {
+        // ourSeat = -1 is the "we don't know our seat" sentinel. Without
+        // knowing which seat is us, the tracker can't correctly attribute
+        // discards (any seat could be ours). Better no inference than wrong
+        // fromSeat in the meld record.
+        var tracker = new MeldTracker();
+        tracker.ObserveSnapshot(Hand("123m55m789p1234567z"), [0, 0, 0, 0], ourSeat: -1);
+        var inferred = tracker.ObserveSnapshot(Hand("123m789p1234567z"), [0, 0, 1, 0], ourSeat: -1);
+        Assert.Null(inferred);
+        Assert.Empty(tracker.Melds);
+    }
+
+    [Fact]
+    public void ObserveSnapshot_rejects_out_of_range_seat()
+    {
+        var tracker = new MeldTracker();
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            tracker.ObserveSnapshot(Hand("123m"), [0, 0, 0, 0], ourSeat: 4));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            tracker.ObserveSnapshot(Hand("123m"), [0, 0, 0, 0], ourSeat: -2));
+    }
 }

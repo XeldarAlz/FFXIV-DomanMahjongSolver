@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Mahjong.Engine;
 using Mahjong.Plugin.Dalamud.GameState;
+using Mahjong.Plugin.Dalamud.Logging;
 using Mahjong.Policy;
 
 namespace Mahjong.Plugin.Dalamud.Actions;
@@ -92,13 +94,15 @@ public sealed class AutoPlayLoop : IDisposable
         if (!IsAutomationArmed())
         {
             var cfg = plugin.Configuration;
-            EmitSkipReason($"gate: tos={cfg.TosAccepted} armed={cfg.AutomationArmed} suggest_only={cfg.SuggestionOnly}");
+            EmitSkipReason($"gate: tos={cfg.TosAccepted} armed={cfg.AutomationArmed} suggest_only={cfg.SuggestionOnly}",
+                state: -1, hand: -1, flags: 0);
             return;
         }
 
         if (!ContinueAfterStuckRecovery())
         {
-            EmitSkipReason("dispatch in flight (still within timeout)");
+            EmitSkipReason("dispatch in flight (still within timeout)",
+                state: -1, hand: -1, flags: 0);
             return;
         }
 
@@ -106,7 +110,7 @@ public sealed class AutoPlayLoop : IDisposable
         if (snap is null)
         {
             fsm.ClearContext();
-            EmitSkipReason("snapshot unavailable");
+            EmitSkipReason("snapshot unavailable", state: -1, hand: -1, flags: 0);
             return;
         }
 
@@ -124,6 +128,7 @@ public sealed class AutoPlayLoop : IDisposable
 
         bool isCallPrompt = (snap.Legal.Flags & CallPromptFlags) != 0;
         bool isDiscardTurn = snap.Legal.Can(ActionFlags.Discard);
+        int flags = (int)snap.Legal.Flags;
 
         // Hand-scope the riichi-confirm latch. Earlier we cleared it on every
         // tick where the popup signature dropped, but popup signature DOES drop
@@ -137,13 +142,15 @@ public sealed class AutoPlayLoop : IDisposable
         if (!isCallPrompt && !isDiscardTurn)
         {
             fsm.ClearContext();
-            EmitSkipReason($"not actionable (state={state} hand={snap.Hand.Count} legal={snap.Legal.Flags})");
+            EmitSkipReason($"not actionable (state={state} hand={snap.Hand.Count} legal={snap.Legal.Flags})",
+                state: state, hand: snap.Hand.Count, flags: flags);
             return;
         }
 
         if (fsm.ShouldSuppressForContext(context, DateTime.UtcNow))
         {
-            EmitSkipReason($"suppressed for context (state={context.State} hand={context.Hand})");
+            EmitSkipReason($"suppressed for context (state={context.State} hand={context.Hand})",
+                state: state, hand: snap.Hand.Count, flags: flags);
             return;
         }
 
@@ -161,17 +168,25 @@ public sealed class AutoPlayLoop : IDisposable
     }
 
     /// <summary>
-    /// Log one Plugin.Log.Info line per skip-reason transition. The auto-play
-    /// loop ticks 60×/sec, so logging every skip would flood the log; this
-    /// dedups by exact reason string so a steady "gate: tos=True armed=True
-    /// suggest_only=True" lands as one log entry, not 3600 per minute.
+    /// Log one Plugin.Log.Info line per skip-reason transition AND emit a
+    /// hand_state_paused finding for telemetry triage. The auto-play loop
+    /// ticks 60×/sec, so emitting every skip would flood; this dedups by
+    /// exact reason string so a steady "gate: tos=True armed=True
+    /// suggest_only=True" lands as one entry, not 3600 per minute.
     /// </summary>
-    private void EmitSkipReason(string reason)
+    private void EmitSkipReason(string reason, int state, int hand, int flags)
     {
         if (lastSkipReason == reason)
             return;
         lastSkipReason = reason;
         log.Info($"[AutoPlayLoop] skip: {reason}");
+        plugin.FindingsLog?.Record("hand_state_paused", new Dictionary<string, object?>
+        {
+            ["reason"] = reason,
+            ["state"] = state,
+            ["hand"] = hand,
+            ["flags"] = flags,
+        });
     }
 
     /// <summary>
@@ -184,6 +199,49 @@ public sealed class AutoPlayLoop : IDisposable
             return;
         log.Info($"[AutoPlayLoop] resumed (was: {lastSkipReason})");
         lastSkipReason = null;
+    }
+
+    /// <summary>
+    /// Record a structured `decision` finding for a single policy choice. Includes
+    /// the chosen action kind, the picked tile (if any), and the legal context
+    /// the policy was evaluating. Used by offline triage to spot policies that
+    /// pick the wrong action shape for a given prompt.
+    /// </summary>
+    private void EmitDecisionFinding(string source, StateSnapshot snap, ActionChoice choice)
+    {
+        plugin.FindingsLog?.Record("decision", new Dictionary<string, object?>
+        {
+            ["source"] = source,
+            ["kind"] = choice.Kind.ToString(),
+            ["tile"] = choice.DiscardTile?.ToString(),
+            ["hand_count"] = snap.Hand.Count,
+            ["flags"] = (int)snap.Legal.Flags,
+            ["pon_candidates"] = snap.Legal.PonCandidates.Count,
+            ["chi_candidates"] = snap.Legal.ChiCandidates.Count,
+            ["kan_candidates"] = snap.Legal.KanCandidates.Count,
+            ["wall"] = snap.WallRemaining,
+            ["reasoning"] = choice.Reasoning,
+        });
+    }
+
+    /// <summary>
+    /// Record a structured `dispatch_attempted` finding for every InputDispatcher
+    /// call. The corpus can then verify "policy decided X, dispatcher fired X,
+    /// game accepted X" instead of guessing from interleaved log lines.
+    /// </summary>
+    private void EmitDispatchFinding(
+        string label, InputDispatcher.DispatchResult result,
+        int? option = null, Tile? tile = null, int? slot = null, int? state = null)
+    {
+        plugin.FindingsLog?.Record("dispatch_attempted", new Dictionary<string, object?>
+        {
+            ["label"] = label,
+            ["result"] = result.ToString(),
+            ["option"] = option,
+            ["tile"] = tile?.ToString(),
+            ["slot"] = slot,
+            ["state"] = state,
+        });
     }
 
     private bool IsAutomationArmed()
@@ -278,6 +336,7 @@ public sealed class AutoPlayLoop : IDisposable
             LastActionDescription = $"auto-variant[opt=0] → {result}";
             log.Info($"[AutoPlayLoop] variant dispatch: {LastActionDescription}");
             plugin.GameLogger.RecordAction(ActionKind.Chi, null, 0, result.ToString(), "chi-variant");
+            EmitDispatchFinding("chi-variant", result, option: 0, state: currentState);
         });
     }
 
@@ -295,6 +354,7 @@ public sealed class AutoPlayLoop : IDisposable
 
             var choice = plugin.Policy.Choose(snap);
             log.Info($"[AutoPlayLoop] discard body: state={context.State} hand={snap.Hand.Count} flags={snap.Legal.Flags} choice={choice.Kind} tile={choice.DiscardTile}");
+            EmitDecisionFinding("discard", snap, choice);
             DispatchPolicyChoice(snap, choice);
             log.Info($"[AutoPlayLoop] discard body done: {LastActionDescription}");
         });
@@ -329,6 +389,7 @@ public sealed class AutoPlayLoop : IDisposable
             }
             var choice = plugin.Policy.Choose(snap);
             log.Info($"[AutoPlayLoop] call body: state={context.State} hand={snap.Hand.Count} flags={snap.Legal.Flags} choice={choice.Kind} tile={choice.DiscardTile}");
+            EmitDecisionFinding("call", snap, choice);
             DispatchCallChoice(snap, choice);
         });
     }
@@ -348,6 +409,7 @@ public sealed class AutoPlayLoop : IDisposable
             LastActionDescription = $"auto-riichi-tsumogiri {tile} slot=13 → {result}";
             log.Info($"[AutoPlayLoop] riichi-tsumogiri dispatch: {LastActionDescription}");
             plugin.GameLogger.RecordAction(ActionKind.Discard, tile, 13, result.ToString(), "riichi-tsumogiri");
+            EmitDispatchFinding("riichi-tsumogiri", result, tile: tile, slot: 13);
             ClearRetryDebounceIfHookFailed(result);
             // Don't clear the latch here — once we've declared riichi we
             // must NOT let policy.Choose re-evaluate it later in the same
@@ -369,6 +431,7 @@ public sealed class AutoPlayLoop : IDisposable
             var result = plugin.Dispatcher.DispatchTsumo();
             LastActionDescription = $"auto-tsumo → {result}";
             plugin.GameLogger.RecordAction(ActionKind.Tsumo, null, null, result.ToString(), choice.Reasoning);
+            EmitDispatchFinding("tsumo", result);
             ClearRetryDebounceIfHookFailed(result);
             return;
         }
@@ -404,6 +467,7 @@ public sealed class AutoPlayLoop : IDisposable
         var result = plugin.Dispatcher.DispatchKan(slot);
         LastActionDescription = $"auto-ankan {kanTile} slot={slot} → {result}";
         plugin.GameLogger.RecordAction(ActionKind.AnKan, kanTile, slot, result.ToString(), choice.Reasoning);
+        EmitDispatchFinding("ankan", result, tile: kanTile, slot: slot);
         ClearRetryDebounceIfHookFailed(result);
     }
 
@@ -423,6 +487,7 @@ public sealed class AutoPlayLoop : IDisposable
         string actionName = choice.Kind == ActionKind.Riichi ? "riichi" : "discard";
         LastActionDescription = $"auto-{actionName} {tile} slot={slot} → {result}";
         plugin.GameLogger.RecordAction(choice.Kind, tile, slot, result.ToString(), choice.Reasoning);
+        EmitDispatchFinding(actionName, result, tile: tile, slot: slot);
         ClearRetryDebounceIfHookFailed(result);
     }
 
@@ -518,13 +583,25 @@ public sealed class AutoPlayLoop : IDisposable
 
     private void DispatchAccept(ActionChoice choice, LegalActions legal, bool acceptRiichiPopup, string riichiReason)
     {
-        var result = plugin.Dispatcher.DispatchCall();
-        string label = acceptRiichiPopup ? "riichi-confirm" : choice.Kind.ToString().ToLowerInvariant();
-        LastActionDescription = $"auto-{label} → {result}";
+        // Compute the correct accept-button index for the chosen action kind.
+        // Pre-fix, this always called DispatchCall() (opt=0), which works only
+        // when the chosen kind is the leftmost button — i.e. when Pon is offered,
+        // Pon was always selected even if the policy returned Chi/MinKan/Ron.
+        // That misfire was the primary cause of the post-2026-05-18 auto-play
+        // regression: on every Pon+Chi simultaneous prompt the loop force-fired
+        // Pon, and on every multi-chi prompt the loop picked the leftmost chi
+        // variant even when the policy preferred a different sequence.
         var loggedKind = acceptRiichiPopup ? ActionKind.Riichi : choice.Kind;
+        int acceptIndex = acceptRiichiPopup
+            ? ComputeAcceptIndex(ActionKind.Riichi, legal, choice.Call)
+            : ComputeAcceptIndex(choice.Kind, legal, choice.Call);
+        var result = plugin.Dispatcher.DispatchCallOption(acceptIndex);
+        string label = acceptRiichiPopup ? "riichi-confirm" : choice.Kind.ToString().ToLowerInvariant();
+        LastActionDescription = $"auto-{label}[opt={acceptIndex}] → {result}";
         plugin.GameLogger.RecordAction(
-            loggedKind, null, null, result.ToString(),
+            loggedKind, null, acceptIndex, result.ToString(),
             acceptRiichiPopup ? riichiReason : choice.Reasoning);
+        EmitDispatchFinding(label, result, option: acceptIndex);
 
         // Latch on for the post-riichi-confirm popup: the yaku-preview confirm
         // popup shares the Riichi-flag signature of the initial popup, so
@@ -543,6 +620,94 @@ public sealed class AutoPlayLoop : IDisposable
         LastActionDescription = $"auto-pass[opt={passIndex}] → {result}";
         string reasoning = string.IsNullOrEmpty(reasonOverride) ? choice.Reasoning : reasonOverride;
         plugin.GameLogger.RecordAction(ActionKind.Pass, null, passIndex, result.ToString(), reasoning);
+        EmitDispatchFinding("pass", result, option: passIndex);
+    }
+
+    /// <summary>
+    /// Compute the button index for an accept-side action on a call-prompt popup.
+    /// The button order is fixed by the addon: Pon, then one slot per Chi variant,
+    /// then MinKan, ShouMinKan, Ron, Riichi, Tsumo, and finally Pass.
+    /// </summary>
+    /// <param name="kind">The action the policy decided to take.</param>
+    /// <param name="legal">The legal-action context (flag set + candidate lists).</param>
+    /// <param name="chosenCall">Optional: for Chi, the specific candidate the policy
+    /// picked. Used to find the right chi-variant button index when the prompt
+    /// offers multiple chi sequences. Null falls back to the first variant (opt 0
+    /// among the chi slots).</param>
+    internal static int ComputeAcceptIndex(ActionKind kind, LegalActions legal, MeldCandidate? chosenCall)
+    {
+        int idx = 0;
+
+        if (kind == ActionKind.Pon)
+            return idx;
+        if (legal.Can(ActionFlags.Pon))
+            idx++;
+
+        if (kind == ActionKind.Chi)
+        {
+            int variant = ResolveChiVariantIndex(legal, chosenCall);
+            return idx + variant;
+        }
+        if (legal.Can(ActionFlags.Chi))
+            idx += Math.Max(1, legal.ChiCandidates.Count);
+
+        if (kind == ActionKind.MinKan)
+            return idx;
+        if (legal.Can(ActionFlags.MinKan))
+            idx++;
+
+        if (kind == ActionKind.ShouMinKan)
+            return idx;
+        if (legal.Can(ActionFlags.ShouMinKan))
+            idx++;
+
+        if (kind == ActionKind.Ron)
+            return idx;
+        if (legal.Can(ActionFlags.Ron))
+            idx++;
+
+        if (kind == ActionKind.Riichi)
+            return idx;
+        if (legal.Can(ActionFlags.Riichi))
+            idx++;
+
+        if (kind == ActionKind.Tsumo)
+            return idx;
+
+        // Unknown action shape for an accept: fall back to leftmost. The dispatcher
+        // would have done this before the fix too, so we preserve the legacy
+        // behavior as the safety net rather than silently swallowing the click.
+        return 0;
+    }
+
+    /// <summary>
+    /// Find the index of the chosen chi candidate within
+    /// <see cref="LegalActions.ChiCandidates"/>. Matched by structural equality on
+    /// the claimed tile + hand tiles. Returns 0 if no match (the legacy default).
+    /// </summary>
+    private static int ResolveChiVariantIndex(LegalActions legal, MeldCandidate? chosenCall)
+    {
+        if (chosenCall is not { } call)
+            return 0;
+        var chi = legal.ChiCandidates;
+        for (int i = 0; i < chi.Count; i++)
+            if (ChiCandidateMatches(chi[i], call))
+                return i;
+        return 0;
+    }
+
+    private static bool ChiCandidateMatches(MeldCandidate a, MeldCandidate b)
+    {
+        if (a.Kind != b.Kind)
+            return false;
+        if (a.ClaimedTile.Id != b.ClaimedTile.Id)
+            return false;
+        if (a.HandTiles.Length != b.HandTiles.Length)
+            return false;
+        for (int i = 0; i < a.HandTiles.Length; i++)
+            if (a.HandTiles[i].Id != b.HandTiles[i].Id)
+                return false;
+        return true;
     }
 
     private static int ComputePassIndex(LegalActions legal)

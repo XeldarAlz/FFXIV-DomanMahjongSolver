@@ -118,11 +118,11 @@ public sealed class GameLogger : IDisposable
         ArgumentNullException.ThrowIfNull(configService);
         ArgumentNullException.ThrowIfNull(log);
         ArgumentException.ThrowIfNullOrEmpty(pluginConfigDir);
-        this.aggregator = null;
+        aggregator = null;
         this.configService = configService;
         this.log = log;
-        this.policyAccessor = null;
-        this.eventLogger = null;
+        policyAccessor = null;
+        eventLogger = null;
         gamesDir = Path.Combine(pluginConfigDir, "games");
         Directory.CreateDirectory(gamesDir);
     }

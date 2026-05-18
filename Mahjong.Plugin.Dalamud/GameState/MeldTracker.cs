@@ -95,15 +95,29 @@ public sealed class MeldTracker
     /// </summary>
     /// <param name="currentHand">Closed hand from the current snapshot.</param>
     /// <param name="discardCounts">Per-seat discard counts, length 4, indexed by seat.</param>
-    /// <param name="ourSeat">Index of our own seat in <paramref name="discardCounts"/>.</param>
+    /// <param name="ourSeat">Index of our own seat in <paramref name="discardCounts"/>.
+    /// Pass <c>-1</c> when our seat is not known; the tracker will then refuse to
+    /// infer melds (the alternative — guessing — risks mis-attributing the
+    /// claimed-from seat, which corrupts fu and wait scoring).</param>
     public Meld? ObserveSnapshot(IReadOnlyList<Tile> currentHand, int[] discardCounts, int ourSeat)
     {
         ArgumentNullException.ThrowIfNull(currentHand);
         ArgumentNullException.ThrowIfNull(discardCounts);
         if (discardCounts.Length != 4)
             throw new ArgumentException("discardCounts must be length 4", nameof(discardCounts));
-        if (ourSeat is < 0 or > 3)
+        if (ourSeat is < -1 or > 3)
             throw new ArgumentOutOfRangeException(nameof(ourSeat));
+
+        // Unknown seat: snapshot state for the next tick so wall/hand deltas
+        // continue to work, but skip every inference path. Better to record
+        // no melds than to invent a wrong fromSeat that would feed wrong
+        // scoring downstream.
+        if (ourSeat < 0)
+        {
+            lastHand = new List<Tile>(currentHand);
+            Array.Copy(discardCounts, lastDiscardCounts, 4);
+            return null;
+        }
 
         // Latch the most-recent opp discarder. This runs every tick so that
         // when an opp discards we record the seat, hold it through the

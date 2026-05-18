@@ -138,6 +138,14 @@ public sealed class Scorer
                 count += counts[rules.DoraRule.Next(indicator).Id];
         }
 
+        // Akadora: red 5m/5p/5s each count as +1 han when present in the hand.
+        // Sourced from WinContext.AkaDora because Tile carries only the
+        // 34-tile id with no IsRed bit. The variant reader counts reds during
+        // hand-decode (raw indices 34/35/36 past the texture base) and ships
+        // the total in the snapshot. Yakuman is already gated above, so
+        // akadora cannot inflate a yakuman win.
+        count += ctx.AkaDora;
+
         return count;
     }
 

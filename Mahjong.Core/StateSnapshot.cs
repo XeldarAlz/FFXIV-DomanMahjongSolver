@@ -69,7 +69,13 @@ public sealed record StateSnapshot(
     // logic must gate on this — without confirmed seat info, treating any
     // particular wind as "your seat wind" is ~75% wrong and biases the policy
     // toward keeping useless wind tiles.
-    bool SeatInfoKnown = false)
+    bool SeatInfoKnown = false,
+
+    // Akadora (red 5m/5p/5s) count in the player's closed hand. Side-channel
+    // rather than a per-Tile flag so Tile stays a 1-byte primitive. Plumbed
+    // into WinContext.AkaDora when the policy evaluates a hand value; Scorer
+    // adds it to the dora total (gated off yakuman by existing logic).
+    int AkaDora = 0)
 {
     public const int CurrentSchemaVersion = 3;
 

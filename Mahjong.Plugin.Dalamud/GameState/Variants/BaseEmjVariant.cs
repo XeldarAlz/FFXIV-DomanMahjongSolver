@@ -94,7 +94,8 @@ internal sealed class BaseEmjVariant : IEmjVariant
         nint addr = (nint)unit;
         byte* basePtr = (byte*)addr;
 
-        var hand = ReadHand(basePtr);
+        int akaDora = 0;
+        var hand = ReadHand(basePtr, ref akaDora);
 
         var scores = ReadScores(basePtr);
         if (!ScoresPlausible(scores))
@@ -108,7 +109,7 @@ internal sealed class BaseEmjVariant : IEmjVariant
         int stateCode = ReadStateCode(atkValues, atkCount);
         int wallRemaining = ResolveWallRemaining(discardCounts);
 
-        var seats = BuildSeatViews(discardCounts);
+        var seats = BuildSeatViews(basePtr, discardCounts);
         var legal = BuildLegalActions(unit, stateCode, hand, atkValues, atkCount);
 
         MaybeLogCallPromptTransition(ctx, addr, stateCode, atkValues, atkCount, hand, legal);
@@ -148,10 +149,11 @@ internal sealed class BaseEmjVariant : IEmjVariant
             OurSeat = 0,
             RoundWind = 0,
             SeatInfoKnown = true,
+            AkaDora = akaDora,
         };
     }
 
-    private unsafe List<Tile> ReadHand(byte* basePtr)
+    private unsafe List<Tile> ReadHand(byte* basePtr, ref int akaDora)
     {
         var hand = new List<Tile>(profile.Limits.HandSize);
         for (int i = 0; i < profile.Limits.HandSize; i++)
@@ -159,10 +161,12 @@ internal sealed class BaseEmjVariant : IEmjVariant
             int raw = *(int*)(basePtr + profile.Offsets.HandArrayStart + i * 4);
             if (raw == 0)
                 break;
-            int tileId = DecodeTileId(raw);
+            int tileId = DecodeTileId(raw, out bool isRed);
             if (tileId < 0)
                 continue;
             hand.Add(Tile.FromId(tileId));
+            if (isRed)
+                akaDora++;
         }
         return hand;
     }
@@ -171,18 +175,32 @@ internal sealed class BaseEmjVariant : IEmjVariant
     // Fold them into the plain tile id; without this the drawn akadora gets
     // dropped from the closed hand and auto-play freezes (BuildLegalActions
     // sees hand.Count % 3 != 2 and reports None even though it's our turn).
-    private int DecodeTileId(int raw)
+    //
+    // Overload that drops the isRed bit for callers that don't care about
+    // akadora (probe checks, candidate derivation when red-vs-plain doesn't
+    // affect the call decision).
+    private int DecodeTileId(int raw) => DecodeTileId(raw, out _);
+
+    private int DecodeTileId(int raw, out bool isRed)
     {
         int idx = raw - profile.TileTextureBase;
+        isRed = false;
         if (idx >= 0 && idx < Tile.Count34)
             return idx;
-        return idx switch
+        switch (idx)
         {
-            34 => 4,
-            35 => 13,
-            36 => 22,
-            _ => -1,
-        };
+            case 34:
+                isRed = true;
+                return 4;   // red 5m
+            case 35:
+                isRed = true;
+                return 13;  // red 5p
+            case 36:
+                isRed = true;
+                return 22;  // red 5s
+            default:
+                return -1;
+        }
     }
 
     private unsafe int[] ReadScores(byte* basePtr) =>
@@ -260,20 +278,61 @@ internal sealed class BaseEmjVariant : IEmjVariant
         return derived >= 0 && derived <= profile.Limits.WallInitial ? derived : profile.Limits.WallInitial;
     }
 
-    private static SeatView[] BuildSeatViews(int[] discardCounts)
+    private unsafe SeatView[] BuildSeatViews(byte* basePtr, int[] discardCounts)
     {
         var seats = new SeatView[4];
+        int?[] discardArrayOffsets =
+        [
+            profile.Offsets.SelfDiscardArray,
+            profile.Offsets.ShimochaDiscardArray,
+            profile.Offsets.ToimenDiscardArray,
+            profile.Offsets.KamichaDiscardArray,
+        ];
         for (int i = 0; i < 4; i++)
+        {
+            var discards = ReadDiscardArray(basePtr, discardArrayOffsets[i], discardCounts[i]);
             seats[i] = new SeatView(
-                Discards: [],
-                DiscardIsTedashi: [],
+                Discards: discards,
+                DiscardIsTedashi: Enumerable.Repeat(true, discards.Count).ToList(),
                 Melds: [],
                 Riichi: false,
                 RiichiDiscardIndex: -1,
                 Ippatsu: false,
                 IsTenpaiCalled: false,
                 DiscardCount: discardCounts[i]);
+        }
         return seats;
+    }
+
+    /// <summary>
+    /// Read up to <paramref name="reportedCount"/> tiles from a per-seat discard
+    /// array. Returns empty when the offset isn't configured for the active
+    /// variant (the default, pre-RE) so SeatView.Discards stays empty without
+    /// needing a null-check at every consumer.
+    ///
+    /// <para>Tedashi tracking (tsumogiri vs in-hand) is not yet wired — the
+    /// addon publishes per-tile tedashi bits at a separate offset that hasn't
+    /// been mapped. For now every discard is reported as tedashi (the more
+    /// conservative assumption for the opponent model: treats every discard
+    /// as deliberate signal).</para>
+    /// </summary>
+    private unsafe IReadOnlyList<Tile> ReadDiscardArray(byte* basePtr, int? offset, int reportedCount)
+    {
+        if (offset is not int off || reportedCount <= 0)
+            return [];
+        int len = Math.Min(reportedCount, profile.Offsets.DiscardArrayMaxLen);
+        var tiles = new List<Tile>(len);
+        for (int i = 0; i < len; i++)
+        {
+            int raw = *(int*)(basePtr + off + i * 4);
+            if (raw == 0)
+                break;
+            int tileId = DecodeTileId(raw);
+            if (tileId < 0)
+                continue;
+            tiles.Add(Tile.FromId(tileId));
+        }
+        return tiles;
     }
 
     /// <summary>
@@ -319,7 +378,7 @@ internal sealed class BaseEmjVariant : IEmjVariant
                 if ((scanned.Flags & acceptMask) != 0)
                     return scanned;
             }
-            return BuildCallPromptLegalFromListItems(unit);
+            return BuildCallPromptLegalFromListItems(unit, hand, atkValues, atkCount);
         }
 
         // "Our turn to discard" = 14 tiles with 0 melds, 11 with 1 meld, 8 with 2, etc. —
@@ -388,24 +447,26 @@ internal sealed class BaseEmjVariant : IEmjVariant
                 AppendPonCandidate(hand, counts, pons);
         }
 
-        // MinKan: emit a candidate only when triplet is unambiguous AND pon isn't
-        // on the same row (DispatchCall hardcodes opt 0 = Pon, so emitting a Kan
-        // candidate alongside pon would risk misfiring).
+        // MinKan: emit a candidate when triplet is unambiguous. Prior to the
+        // accept-button-index fix in AutoPlayLoop.ComputeAcceptIndex we used
+        // to skip this when pon was also on the row, because DispatchCall
+        // hardcoded option 0 (Pon-as-leftmost) and emitting a Kan candidate
+        // would have caused a misfire. With the fix in place the dispatcher
+        // routes to the correct button per ActionKind, so all candidates can
+        // safely coexist and the call policy gets to pick the best by shanten
+        // delta + yaku reachability.
         if (labels.OffersKan)
         {
             flags |= ActionFlags.MinKan;
-            if (!labels.OffersPon)
-                AppendKanCandidate(hand, counts, kans);
+            AppendKanCandidate(hand, counts, kans);
         }
 
         // Chi: claimed tile is at the configured AtkValue index (chi-claim slot).
-        // Pon+Chi simultaneous prompt: skip the chi candidate when pon is also
-        // offered (DispatchCall always clicks option 0, and pon is leftmost).
+        // Emitted simultaneously with pon now — see comment above.
         if (labels.OffersChi)
         {
             flags |= ActionFlags.Chi;
-            if (!labels.OffersPon)
-                AppendChiCandidate(hand, atkValues, atkCount, chis);
+            AppendChiCandidate(hand, atkValues, atkCount, chis);
         }
 
         return new LegalActions(flags, [], pons, chis, kans);
@@ -634,9 +695,19 @@ internal sealed class BaseEmjVariant : IEmjVariant
     /// <summary>
     /// Build LegalActions for an AtkComponentList-based call prompt (state 28 today).
     /// Reads each visible ListItemRenderer child of the modal shell and maps its
-    /// text label to an <see cref="ActionFlags"/> bit.
+    /// text label to an <see cref="ActionFlags"/> bit, then derives Pon/Chi/Kan
+    /// candidates from the hand so the call policy has actual choices to evaluate.
+    ///
+    /// <para>Pre-2026-05-19 this path returned <c>(flags, [], [], [], [])</c> — no
+    /// candidates. The call policy then declined every state-28 prompt with
+    /// <c>"no call candidates offered"</c>, so novice-table players saw the
+    /// plugin silently pass on every chi/pon/kan opportunity. Derivation here
+    /// uses the same hand-scan helpers as the state-15 path; the AtkValues
+    /// pointer is passed through so the chi-claim lookup can still scan when
+    /// the addon happens to expose it on a list-widget prompt.</para>
     /// </summary>
-    private unsafe LegalActions BuildCallPromptLegalFromListItems(AtkUnitBase* unit)
+    private unsafe LegalActions BuildCallPromptLegalFromListItems(
+        AtkUnitBase* unit, IReadOnlyList<Tile> hand, AtkValue* atkValues, int atkCount)
     {
         var labels = ReadVisibleListItemLabels(unit);
         if (labels.Count == 0)
@@ -669,7 +740,29 @@ internal sealed class BaseEmjVariant : IEmjVariant
                     // the pass option index from the count of accept flags set.
             }
         }
-        return new LegalActions(flags, [], [], [], []);
+
+        var pons = new List<MeldCandidate>();
+        var chis = new List<MeldCandidate>();
+        var kans = new List<MeldCandidate>();
+
+        var counts = new int[Tile.Count34];
+        foreach (var t in hand)
+            counts[t.Id]++;
+
+        var handList = hand as List<Tile> ?? new List<Tile>(hand);
+        if ((flags & ActionFlags.Pon) != 0)
+        {
+            if (atkValues != null)
+                AppendPonCandidateFromAtkValues(handList, counts, atkValues, atkCount, pons);
+            if (pons.Count == 0)
+                AppendPonCandidate(handList, counts, pons);
+        }
+        if ((flags & ActionFlags.Chi) != 0 && atkValues != null)
+            AppendChiCandidate(handList, atkValues, atkCount, chis);
+        if ((flags & ActionFlags.MinKan) != 0)
+            AppendKanCandidate(handList, counts, kans);
+
+        return new LegalActions(flags, [], pons, chis, kans);
     }
 
     private unsafe List<string> ReadVisibleListItemLabels(AtkUnitBase* unit)

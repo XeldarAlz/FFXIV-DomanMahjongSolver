@@ -71,4 +71,42 @@ public class DoraTests
         // r2 adds riichi (+1) and ura dora (+1) compared to r1.
         Assert.Equal(r1.Han + 2, r2.Han);
     }
+
+    // -------- Akadora side-channel --------
+
+    [Fact]
+    public void AkaDora_adds_one_han_per_red_in_closed_hand()
+    {
+        // Variant reader counts a red 5m and reports AkaDora=1 in the snapshot,
+        // which flows to WinContext. Scorer must add the count to the total.
+        var hand = Hand.FromNotation("234m456p789s234s99m");
+        var baseCtx = new WinContext(Tiles.Parse("2m")[0], WinKind.Tsumo);
+        var withOneRed = baseCtx with { AkaDora = 1 };
+        var withTwoReds = baseCtx with { AkaDora = 2 };
+
+        var r0 = TestRules.Scorer.Evaluate(hand, baseCtx)!;
+        var r1 = TestRules.Scorer.Evaluate(hand, withOneRed)!;
+        var r2 = TestRules.Scorer.Evaluate(hand, withTwoReds)!;
+
+        Assert.Equal(r0.Han + 1, r1.Han);
+        Assert.Equal(r0.Han + 2, r2.Han);
+    }
+
+    [Fact]
+    public void AkaDora_stacks_with_regular_dora()
+    {
+        // Both effects apply additively: regular dora from an indicator AND
+        // akadora from the snapshot's AkaDora count.
+        var hand = Hand.FromNotation("234m456p789s234s99m");
+        var baseCtx = new WinContext(Tiles.Parse("2m")[0], WinKind.Tsumo);
+        var withBoth = baseCtx with
+        {
+            DoraIndicators = [Tiles.Parse("1m")[0]],
+            AkaDora = 1,
+        };
+
+        var r0 = TestRules.Scorer.Evaluate(hand, baseCtx)!;
+        var r1 = TestRules.Scorer.Evaluate(hand, withBoth)!;
+        Assert.Equal(r0.Han + 2, r1.Han);
+    }
 }

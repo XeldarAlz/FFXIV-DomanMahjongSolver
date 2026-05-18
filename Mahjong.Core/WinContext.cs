@@ -38,7 +38,15 @@ public sealed record WinContext(
     IReadOnlyList<Tile>? UraDoraIndicators = null,
 
     // Dealer flag
-    bool IsDealer = false)
+    bool IsDealer = false,
+
+    // Akadora count (red 5m/5p/5s). Side-channel rather than per-Tile flag —
+    // keeps Tile a 1-byte primitive while still letting Scorer.CountDora
+    // include red 5s in the han total. Sourced from the variant reader,
+    // which scans for the addon's raw indices (34/35/36) and accumulates
+    // a count across the closed hand + dora indicator. Yakuman wins must
+    // ignore this (the scorer already gates the dora-add on !isYakuman).
+    int AkaDora = 0)
 {
     public IReadOnlyList<Tile>? DoraIndicators { get; init; }
         = DoraIndicators is null ? null : [.. DoraIndicators];

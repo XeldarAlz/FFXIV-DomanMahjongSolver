@@ -35,7 +35,26 @@ public sealed record LayoutOffsets(
     int ToimenDiscardCountByte,
     int KamichaDiscardCountByte,
     int HandArrayStart,
-    int DoraIndicator);
+    int DoraIndicator,
+
+    // Per-seat discard tile arrays. Each entry is the byte offset to the
+    // start of that seat's discard pile, an int[] of raw texture ids matching
+    // the same encoding as HandArrayStart. Optional — when null the variant
+    // reader leaves SeatView.Discards empty (the existing behavior).
+    //
+    // The offsets are intentionally not yet baked into emj.json / emj_l.json
+    // because they need empirical RE against the B2 corpus's tagged memdumps
+    // (the 2026-05-18 triage note pinned the search range: each of the four
+    // seat blocks at 0x04FE..0x107D, stride 0x2E0, ~63% of bytes per block
+    // vary across installs and the discard region should correlate cleanly
+    // with the matching `dc` count). Once the offsets are pinned, just add
+    // four ints to data/layouts/emj.json and Discards will fill in. Length
+    // bound DiscardArrayMaxLen prevents over-read on corrupt frames.
+    int? SelfDiscardArray = null,
+    int? ShimochaDiscardArray = null,
+    int? ToimenDiscardArray = null,
+    int? KamichaDiscardArray = null,
+    int DiscardArrayMaxLen = 24);
 
 /// <summary>
 /// Atk node IDs for the call-modal popup. The host is the modal container;
