@@ -8,6 +8,7 @@ using Mahjong.Engine;
 using Mahjong.Plugin.Dalamud.Actions;
 using Mahjong.Plugin.Dalamud.GameState;
 using Mahjong.Policy;
+using Mahjong.Policy.Abstractions;
 using Mahjong.Policy.Efficiency;
 
 namespace Mahjong.Plugin.Dalamud.UI;
@@ -156,7 +157,117 @@ public sealed class DebugOverlay : Window, IDisposable
         }
 
         ImGui.Dummy(new Vector2(0, 4));
+        DrawCallPromptCard();
+        ImGui.Dummy(new Vector2(0, 4));
         DrawPolicyPickCard();
+    }
+
+    /// <summary>
+    /// Real-time view of the call-prompt analysis path. Shows what the
+    /// variant reader sees in legal flags + candidate lists, plus the
+    /// dispatch indices the autoplay loop would compute for each action.
+    /// Lets the developer verify in one glance that a live chi/pon prompt
+    /// is being decoded correctly without checking dalamud.log or B2.
+    /// </summary>
+    private void DrawCallPromptCard()
+    {
+        using (Theme.BeginCard("status-callprompt"))
+        {
+            Theme.SectionHeader("Call-prompt analysis");
+
+            var snap = plugin.AddonReader.TryBuildSnapshot();
+            if (snap is null)
+            {
+                Theme.Subtle("No snapshot.");
+                return;
+            }
+
+            var legal = snap.Legal;
+            const ActionFlags acceptMask =
+                ActionFlags.Pon | ActionFlags.Chi |
+                ActionFlags.MinKan | ActionFlags.ShouMinKan |
+                ActionFlags.Ron | ActionFlags.Riichi | ActionFlags.Tsumo;
+            bool isCallPrompt = (legal.Flags & acceptMask) != 0;
+
+            KeyValueRow("Flags", legal.Flags.ToString());
+            KeyValueRow("Pon / Chi / Kan candidates",
+                $"{legal.PonCandidates.Count} / {legal.ChiCandidates.Count} / {legal.KanCandidates.Count}");
+            KeyValueRow("AkaDora total", snap.AkaDora.ToString());
+
+            if (!isCallPrompt)
+            {
+                ImGui.Dummy(new Vector2(0, 4));
+                Theme.Subtle("No accept-side action on offer — not a call prompt.");
+                return;
+            }
+
+            ImGui.Dummy(new Vector2(0, 4));
+            ImGui.PushStyleColor(ImGuiCol.Text, Theme.Header);
+            ImGui.TextUnformatted("Dispatch indices");
+            ImGui.PopStyleColor();
+            ImGui.Dummy(new Vector2(0, 2));
+
+            // Show the button index AutoPlayLoop.ComputeAcceptIndex would
+            // emit for each offered accept kind. Pass index closes the row.
+            void RowFor(ActionKind kind, ActionFlags flag, string label)
+            {
+                if ((legal.Flags & flag) == 0)
+                    return;
+                MeldCandidate? sample = kind switch
+                {
+                    ActionKind.Pon => legal.PonCandidates.Count > 0 ? legal.PonCandidates[0] : (MeldCandidate?)null,
+                    ActionKind.Chi => legal.ChiCandidates.Count > 0 ? legal.ChiCandidates[0] : (MeldCandidate?)null,
+                    ActionKind.MinKan => legal.KanCandidates.Count > 0 ? legal.KanCandidates[0] : (MeldCandidate?)null,
+                    _ => null,
+                };
+                int idx = AutoPlayLoop.ComputeAcceptIndex(kind, legal, sample);
+                KeyValueRow($"  {label}", $"opt={idx}");
+            }
+            RowFor(ActionKind.Pon, ActionFlags.Pon, "Pon");
+            RowFor(ActionKind.Chi, ActionFlags.Chi,
+                legal.ChiCandidates.Count > 1
+                    ? $"Chi (×{legal.ChiCandidates.Count} variants)"
+                    : "Chi");
+            RowFor(ActionKind.MinKan, ActionFlags.MinKan, "MinKan");
+            RowFor(ActionKind.ShouMinKan, ActionFlags.ShouMinKan, "ShouMinKan");
+            RowFor(ActionKind.Ron, ActionFlags.Ron, "Ron");
+            RowFor(ActionKind.Riichi, ActionFlags.Riichi, "Riichi");
+            RowFor(ActionKind.Tsumo, ActionFlags.Tsumo, "Tsumo");
+            int passIdx = ComputePassIndexLocal(legal);
+            KeyValueRow("  Pass", $"opt={passIdx}");
+
+            var choice = plugin.Policy.Choose(snap);
+            ImGui.Dummy(new Vector2(0, 4));
+            ImGui.PushStyleColor(ImGuiCol.Text, Theme.Info);
+            ImGui.TextUnformatted($"Policy → {choice.Kind} {(choice.DiscardTile?.ToString() ?? "")}");
+            ImGui.PopStyleColor();
+            if (!string.IsNullOrEmpty(choice.Reasoning))
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, Theme.Faint);
+                ImGui.TextWrapped($"  {choice.Reasoning}");
+                ImGui.PopStyleColor();
+            }
+        }
+    }
+
+    private static int ComputePassIndexLocal(LegalActions legal)
+    {
+        int idx = 0;
+        if (legal.Can(ActionFlags.Pon))
+            idx++;
+        if (legal.Can(ActionFlags.Chi))
+            idx += Math.Max(1, legal.ChiCandidates.Count);
+        if (legal.Can(ActionFlags.MinKan))
+            idx++;
+        if (legal.Can(ActionFlags.ShouMinKan))
+            idx++;
+        if (legal.Can(ActionFlags.Ron))
+            idx++;
+        if (legal.Can(ActionFlags.Riichi))
+            idx++;
+        if (legal.Can(ActionFlags.Tsumo))
+            idx++;
+        return idx;
     }
 
     private unsafe void DrawAtkValuesRow()
