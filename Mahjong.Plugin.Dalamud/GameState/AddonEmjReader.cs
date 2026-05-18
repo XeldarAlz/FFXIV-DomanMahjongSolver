@@ -215,62 +215,78 @@ public sealed class AddonEmjReader : IDisposable
                 LastSeenUtcTicks: DateTime.UtcNow.Ticks,
                 LastLifecycleEvent: eventName);
 
-            // First time per attach we see the addon: ship a single
-            // lifecycle finding with addon name + dimensions + AtkValue
-            // count. Reset on PreFinalize so each match produces a fresh
-            // paired addon_lifecycle/addon_unload event.
-            if (!emittedFirstLifecycle)
-            {
-                emittedFirstLifecycle = true;
-                findings?.Record("addon_lifecycle", new Dictionary<string, object?>
-                {
-                    ["event"] = eventName,
-                    ["addon_name"] = args.AddonName,
-                    ["address"] = addr.ToInt64(),
-                    ["width"] = obs.Width,
-                    ["height"] = obs.Height,
-                    ["is_visible"] = unit->IsVisible,
-                    ["atk_values_count"] = (int)unit->AtkValuesCount,
-                });
-            }
-
-            // Schema/timing oddity: addon address is live but RootNode is
-            // null. Width and Height fall through to 0 in the observation,
-            // and any ImGui-driven highlight code that does math on those
-            // dimensions will crash. Emit once per plugin load — same
-            // anomaly recurring every tick is the same datapoint.
-            if (unit->RootNode == null && !emittedDimensionsZero)
-            {
-                emittedDimensionsZero = true;
-                findings?.Record("addon_dimensions_zero", new Dictionary<string, object?>
-                {
-                    ["addon_name"] = args.AddonName,
-                    ["address"] = addr.ToInt64(),
-                    ["event"] = eventName,
-                    ["is_visible"] = unit->IsVisible,
-                });
-            }
-
-            // AtkValues anomaly: empty (count=0) or absurdly large
-            // (>1024). The former usually means we're inspecting the
-            // wrong addon (something else bound to a Mahjong name); the
-            // latter suggests memory corruption or a bad read.
-            int atkCount = (int)unit->AtkValuesCount;
-            if ((atkCount == 0 || atkCount > 1024) && !emittedAtkValuesAnomaly)
-            {
-                emittedAtkValuesAnomaly = true;
-                findings?.Record("atk_values_anomaly", new Dictionary<string, object?>
-                {
-                    ["addon_name"] = args.AddonName,
-                    ["address"] = addr.ToInt64(),
-                    ["atk_values_count"] = atkCount,
-                    ["kind"] = atkCount == 0 ? "empty" : "oversize",
-                });
-            }
+            EmitFirstAttachFindings(eventName, args.AddonName, unit, addr, obs);
         }
 
         LastObservation = obs;
         ObservationChanged?.Invoke(obs);
+    }
+
+    /// <summary>
+    /// One-shot per-attach findings emission. Called from both
+    /// <see cref="Observe"/> (Dalamud lifecycle events) and <see cref="Poll"/>
+    /// (GameGui-driven discovery). Without the Poll path firing this, ~70% of
+    /// installs in the 2026-05-11 corpus shipped zero gameplay logs — those
+    /// installs loaded the plugin with the addon already open, so no
+    /// PostSetup event ever fired and the lifecycle/anomaly findings (which
+    /// downstream analyzers use as session-start markers) never landed.
+    ///
+    /// <para>Each emit is gated on a per-session bool, so repeat calls (Poll
+    /// fires every tick) only land the first event for the current attach.
+    /// The PreFinalize handler resets <c>emittedFirstLifecycle</c> so the
+    /// NEXT match emits a fresh lifecycle pair.</para>
+    /// </summary>
+    private unsafe void EmitFirstAttachFindings(
+        string eventName, string addonName, AtkUnitBase* unit, nint addr, AddonEmjObservation obs)
+    {
+        if (!emittedFirstLifecycle)
+        {
+            emittedFirstLifecycle = true;
+            findings?.Record("addon_lifecycle", new Dictionary<string, object?>
+            {
+                ["event"] = eventName,
+                ["addon_name"] = addonName,
+                ["address"] = addr.ToInt64(),
+                ["width"] = obs.Width,
+                ["height"] = obs.Height,
+                ["is_visible"] = unit->IsVisible,
+                ["atk_values_count"] = (int)unit->AtkValuesCount,
+            });
+        }
+
+        // Schema/timing oddity: addon address is live but RootNode is
+        // null. Width and Height fall through to 0 in the observation,
+        // and any ImGui-driven highlight code that does math on those
+        // dimensions will crash. Emit once per plugin load — same
+        // anomaly recurring every tick is the same datapoint.
+        if (unit->RootNode == null && !emittedDimensionsZero)
+        {
+            emittedDimensionsZero = true;
+            findings?.Record("addon_dimensions_zero", new Dictionary<string, object?>
+            {
+                ["addon_name"] = addonName,
+                ["address"] = addr.ToInt64(),
+                ["event"] = eventName,
+                ["is_visible"] = unit->IsVisible,
+            });
+        }
+
+        // AtkValues anomaly: empty (count=0) or absurdly large
+        // (>1024). The former usually means we're inspecting the
+        // wrong addon (something else bound to a Mahjong name); the
+        // latter suggests memory corruption or a bad read.
+        int atkCount = (int)unit->AtkValuesCount;
+        if ((atkCount == 0 || atkCount > 1024) && !emittedAtkValuesAnomaly)
+        {
+            emittedAtkValuesAnomaly = true;
+            findings?.Record("atk_values_anomaly", new Dictionary<string, object?>
+            {
+                ["addon_name"] = addonName,
+                ["address"] = addr.ToInt64(),
+                ["atk_values_count"] = atkCount,
+                ["kind"] = atkCount == 0 ? "empty" : "oversize",
+            });
+        }
     }
 
     /// <summary>
@@ -301,6 +317,16 @@ public sealed class AddonEmjReader : IDisposable
             Height: unit->RootNode != null ? unit->RootNode->Height : (ushort)0,
             LastSeenUtcTicks: DateTime.UtcNow.Ticks,
             LastLifecycleEvent: LastObservation.LastLifecycleEvent ?? "(poll)");
+
+        // When the addon is already open at plugin load no PostSetup event
+        // fires — Dalamud only signals lifecycle events that happen AFTER
+        // the listener registers. ~70% of installs in the 2026-05-11 corpus
+        // (17/25) shipped zero gameplay logs for this exact reason. Route
+        // the Poll-discovered attach through the same finding-emission path
+        // Observe uses; the per-session bool gates prevent double-emit on
+        // sessions where Observe fired first.
+        EmitFirstAttachFindings("poll", resolvedName, unit, addr, obs);
+
         EmitPollPresentChange(true, resolvedName, addr);
         LastObservation = obs;
         return obs;
