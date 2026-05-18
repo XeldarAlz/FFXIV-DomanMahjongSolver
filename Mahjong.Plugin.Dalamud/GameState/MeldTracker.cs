@@ -37,6 +37,14 @@ public sealed class MeldTracker
     private readonly int[] lastDiscardCounts = new int[4];
     private int lastObservedWall = -1;
     private List<Tile>? lastHand;
+    // The opp seat whose discard count incremented most recently within
+    // this hand. We can't compare counts to "previous tick" when inferring
+    // a meld — the opp discard fires several ticks before we click chi/pon
+    // (their discard → prompt visible for seconds → our click) so a
+    // last-tick comparison sees no increment at click time. Instead track
+    // the most recent opp discarder, hold it through the call-prompt
+    // window, and consume it when the closed-hand shrink fires.
+    private int pendingOppDiscardSeat = -1;
 
     public IReadOnlyList<Meld> Melds => melds;
 
@@ -53,6 +61,7 @@ public sealed class MeldTracker
         melds.Clear();
         lastObservedWall = -1;
         lastHand = null;
+        pendingOppDiscardSeat = -1;
         Array.Clear(lastDiscardCounts);
     }
 
@@ -67,6 +76,7 @@ public sealed class MeldTracker
         {
             melds.Clear();
             lastHand = null;
+            pendingOppDiscardSeat = -1;
             Array.Clear(lastDiscardCounts);
         }
         lastObservedWall = wallRemaining;
@@ -95,23 +105,31 @@ public sealed class MeldTracker
         if (ourSeat is < 0 or > 3)
             throw new ArgumentOutOfRangeException(nameof(ourSeat));
 
+        // Latch the most-recent opp discarder. This runs every tick so that
+        // when an opp discards we record the seat, hold it through the
+        // call-prompt window (which can span many ticks), and have it ready
+        // when the closed-hand shrink fires on our chi/pon click.
+        UpdatePendingOppDiscarder(discardCounts, ourSeat);
+
         Meld? inferred = null;
-        if (lastHand is not null)
+        if (lastHand is not null && pendingOppDiscardSeat >= 0)
         {
             int delta = lastHand.Count - currentHand.Count;
             if (delta is 2 or 3)
             {
-                int fromSeat = FindIncrementingOpponentSeat(discardCounts, ourSeat);
-                if (fromSeat >= 0)
+                var removed = DiffRemoved(lastHand, currentHand);
+                if (removed.Count == delta)
                 {
-                    var removed = DiffRemoved(lastHand, currentHand);
-                    if (removed.Count == delta)
+                    inferred = delta == 2
+                        ? InferChiOrPon(removed, pendingOppDiscardSeat)
+                        : InferMinKan(removed, pendingOppDiscardSeat);
+                    if (inferred is { } m)
                     {
-                        inferred = delta == 2
-                            ? InferChiOrPon(removed, fromSeat)
-                            : InferMinKan(removed, fromSeat);
-                        if (inferred is { } m)
-                            melds.Add(m);
+                        melds.Add(m);
+                        // The pending discarder is consumed by this call —
+                        // a subsequent chi/pon needs its own fresh opp
+                        // discard to fire.
+                        pendingOppDiscardSeat = -1;
                     }
                 }
             }
@@ -124,16 +142,15 @@ public sealed class MeldTracker
         return inferred;
     }
 
-    private int FindIncrementingOpponentSeat(int[] discardCounts, int ourSeat)
+    private void UpdatePendingOppDiscarder(int[] discardCounts, int ourSeat)
     {
         for (int i = 0; i < 4; i++)
         {
             if (i == ourSeat)
                 continue;
             if (discardCounts[i] > lastDiscardCounts[i])
-                return i;
+                pendingOppDiscardSeat = i;
         }
-        return -1;
     }
 
     private static List<Tile> DiffRemoved(IReadOnlyList<Tile> before, IReadOnlyList<Tile> after)

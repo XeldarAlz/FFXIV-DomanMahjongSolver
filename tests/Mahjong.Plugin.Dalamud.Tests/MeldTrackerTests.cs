@@ -246,6 +246,50 @@ public class MeldTrackerTests
     }
 
     [Fact]
+    public void ObserveSnapshot_latches_opp_discard_across_call_prompt_window()
+    {
+        // The realistic timing: opp discards on tick N, the call prompt sits
+        // visible for many ticks, then we click on tick N+k. The opp's
+        // discard count was incremented at tick N — by tick N+k it's stable
+        // again, so a last-tick comparison would see no increment when the
+        // closed hand finally shrinks. The tracker has to latch the
+        // most-recent opp discarder across the prompt window.
+        var tracker = new MeldTracker();
+        // Tick 1: baseline at 13 tiles, no opp activity.
+        tracker.ObserveSnapshot(Hand("123m55m789p1234567z"), [0, 0, 0, 0], ourSeat: 0);
+        // Tick 2: opp seat 2 discards. Hand still 13 (prompt visible).
+        tracker.ObserveSnapshot(Hand("123m55m789p1234567z"), [0, 0, 1, 0], ourSeat: 0);
+        // Ticks 3-4: prompt sits visible, counts unchanged.
+        tracker.ObserveSnapshot(Hand("123m55m789p1234567z"), [0, 0, 1, 0], ourSeat: 0);
+        tracker.ObserveSnapshot(Hand("123m55m789p1234567z"), [0, 0, 1, 0], ourSeat: 0);
+        // Tick 5: we click pon. Hand goes 13 → 11. Opp counts unchanged.
+        var inferred = tracker.ObserveSnapshot(Hand("123m789p1234567z"), [0, 0, 1, 0], ourSeat: 0);
+
+        Assert.NotNull(inferred);
+        Assert.Equal(MeldKind.Pon, inferred!.Value.Kind);
+        Assert.Equal(2, inferred.Value.ClaimedFromSeat);
+        Assert.Single(tracker.Melds);
+    }
+
+    [Fact]
+    public void ObserveSnapshot_consumes_pending_discarder_so_second_call_needs_fresh_discard()
+    {
+        // After a meld lands, the pending opp-discard is consumed. A second
+        // chi/pon later in the hand should only fire if a NEW opp discard
+        // has been latched since.
+        var tracker = new MeldTracker();
+        tracker.ObserveSnapshot(Hand("123m55m789p1234567z"), [0, 0, 0, 0], ourSeat: 0);
+        tracker.ObserveSnapshot(Hand("123m55m789p1234567z"), [0, 0, 1, 0], ourSeat: 0);
+        var firstPon = tracker.ObserveSnapshot(Hand("123m789p1234567z"), [0, 0, 1, 0], ourSeat: 0);
+        Assert.NotNull(firstPon);
+
+        // A spurious hand shrink with no new opp discard should not infer.
+        // (Unrealistic in normal play but pins the consumption behavior.)
+        var stale = tracker.ObserveSnapshot(Hand("3m789p1234567z"), [0, 0, 1, 0], ourSeat: 0);
+        Assert.Null(stale);
+    }
+
+    [Fact]
     public void ObserveSnapshot_respects_ourSeat_when_classifying_discard_owner()
     {
         // If our own discard-count incremented, that's our discard (not a call
